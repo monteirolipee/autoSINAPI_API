@@ -58,10 +58,35 @@ root_logger.setLevel(logging.INFO)
 
 logger = logging.getLogger("autosinapi.api")
 
-# ── Documentação de autenticação e limites (gateway Kong) ──
-# O esquema de segurança ApiKeyAuth (X-API-KEY) é injetado via custom_openapi()
-# (abaixo), pois o Kong — não o FastAPI — determina auth/rate-limit.
+# ── Documentação consolidada de autenticação, rate limits e erros ──
+# Contrato do gateway Kong (não do FastAPI). Os números de rate limit espelham
+# kong/plans.yaml (SSOT canônico dos planos). A API NÃO importa de `stacks/`
+# (GUIDE-development.md 1.2); apenas documenta o contrato exposto pelo Kong.
+_AUTH_SECTION = (
+    "## Autenticação\n"
+    "Endpoints em `/api/v1/public/*` são públicos (sem chave) com rate limit de demonstração "
+    "(15 req/min, 300 req/hour). Envie o header `X-API-KEY` para elevar o limite conforme o plano:\n"
+    "- **Starter**: 600 req/min (fila compartilhada, insumos + composições)\n"
+    "- **Pro**: 3.000 req/min (fila prioritária, + BOM e Análise BI)\n"
+    "- **Business**: 10.000 req/min (fila dedicada, + endpoints exclusivos)\n\n"
+)
+_ERROR_SECTION = (
+    "## Códigos de Erro (retornados pelo gateway Kong)\n"
+    "- `401` API key ausente/inválida\n"
+    "- `402` assinatura inativa/expirada\n"
+    "- `429` rate limit excedido\n\n"
+)
+_TIER_SECTION = (
+    "## Tiers de Endpoint (disponibilidade por plano)\n"
+    "- `tier_1` (leve): health, stats, filters, insumos, composições — Starter/Pro/Business\n"
+    "- `tier_2` (pesado/BI): BOM, curva-abc, tendências, precos-uf — Pro/Business\n"
+    "- `tier_3` (exclusivo): Business\n"
+)
+# SSOT da documentação de auth/erros/rate-limits exibida no Swagger (consolidada).
+_AUTH_DOCS = _AUTH_SECTION + _ERROR_SECTION + _TIER_SECTION
+
 # Respostas de erro retornadas pelo gateway Kong + plugin ssl-mp-adapter.
+# SSOT do contrato de erro reutilizada por todos os endpoints (coesão/DRY).
 _AUTH_RESPONSES = {
     401: {"description": "API key ausente ou inválida (header X-API-KEY)."},
     402: {"description": "Assinatura inativa ou expirada. Renove em https://autosinapi.mundoaec.com/checkout."},
@@ -76,20 +101,7 @@ app = FastAPI(
     title="AutoSINAPI API",
     description=(
         "API para consulta de preços, custos, estruturas e análises da base de dados SINAPI.\n\n"
-        "## Autenticação\n"
-        "Endpoints em `/api/v1/public/*` são públicos (sem chave) com rate limit de demonstração "
-        "(15 req/min, 300 req/hour). Envie o header `X-API-KEY` para elevar o limite conforme o plano:\n"
-        "- **Starter**: 600 req/min (fila compartilhada, insumos + composições)\n"
-        "- **Pro**: 3.000 req/min (fila prioritária, + BOM e Análise BI)\n"
-        "- **Business**: 10.000 req/min (fila dedicada, + endpoints exclusivos)\n\n"
-        "## Códigos de Erro (retornados pelo gateway Kong)\n"
-        "- `401` API key ausente/inválida\n"
-        "- `402` assinatura inativa/expirada\n"
-        "- `429` rate limit excedido\n\n"
-        "## Tiers de Endpoint (disponibilidade por plano)\n"
-        "- `tier_1` (leve): health, stats, filters, insumos, composições — Starter/Pro/Business\n"
-        "- `tier_2` (pesado/BI): BOM, curva-abc, tendências, precos-uf — Pro/Business\n"
-        "- `tier_3` (exclusivo): Business\n"
+        + _AUTH_DOCS
     ),
     version="1.0.0",
 )
