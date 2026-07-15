@@ -15,7 +15,7 @@ import redis
 from celery.result import AsyncResult
 from .sandbox_utils import is_sandbox_mode
 from typing import List, Optional
-from fastapi import FastAPI, Depends, HTTPException, Query, Body, Path, Request
+from fastapi import FastAPI, Depends, HTTPException, Query, Path, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -202,21 +202,19 @@ def get_filters(
 
 @app.post("/api/v1/admin/populate-database", status_code=202, tags=["tier_1", "Admin"], summary="Disparar população da base de dados", response_description="Tarefa de ETL enfileirada para processamento assíncrono.", responses=_AUTH_RESPONSES)
 def trigger_database_population(
-    year: int = Body(..., example=2025), 
-    month: int = Body(..., example=9),
-    state: str = Body("SP", example="SP", min_length=2, max_length=2)
+    payload: schemas.PopulateDatabaseRequest,
 ):
     """
     Dispara a tarefa de download e população da base SINAPI para um mês/ano/UF.
     A tarefa roda em segundo plano. Implementa trava (lock) para evitar duplicações.
     """
     sandbox = is_sandbox_mode()
-    lock_key = f"lock:autosinapi:populate:{year}:{month:02d}:{state.upper()}:{'sandbox' if sandbox else 'prod'}"
+    lock_key = f"lock:autosinapi:populate:{payload.year}:{payload.month:02d}:{payload.state.upper()}:{'sandbox' if sandbox else 'prod'}"
 
     if not redis_client.set(lock_key, "active", nx=True, ex=3600):
         raise HTTPException(
             status_code=409,
-            detail=f"Já existe uma tarefa em andamento para {state.upper()} {month:02d}/{year}."
+            detail=f"Já existe uma tarefa em andamento para {payload.state.upper()} {payload.month:02d}/{payload.year}."
         )
 
     db_config = {
@@ -227,9 +225,9 @@ def trigger_database_population(
         "password": os.getenv("POSTGRES_PASSWORD", "admin"),
     }
     sinapi_config = { 
-        "year": year, 
-        "month": month, 
-        "state": state.upper(),
+        "year": payload.year, 
+        "month": payload.month, 
+        "state": payload.state.upper(),
         "type": "REFERENCIA"
     }
 
@@ -369,7 +367,7 @@ def get_composition_man_hours(codigo: int, db: Session = Depends(get_db)):
 
 @app.post("/api/v1/public/bi/curva-abc", response_model=List[schemas.CurvaABCItem], tags=["tier_2", "Business Intelligence"], summary="Calcular curva ABC de insumos", response_description="Curva ABC de insumos das composições informadas.", responses=_RATE_LIMIT_RESPONSE)
 def get_abc_curve(
-    codigos: List[int] = Body(..., description="Lista de códigos de composições a serem analisadas.", example=[92711, 88307]),
+    payload: schemas.CurvaABCRequest,
     uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": "SP"}),
     data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": "2025-09"}),
     regime: str = Query("NAO_DESONERADO", description="Regime de preço.", examples={"exemplo": "NAO_DESONERADO"}),
@@ -379,7 +377,7 @@ def get_abc_curve(
     Calcula a Curva ABC de insumos para um grupo de composições,
     identificando os itens de maior impacto financeiro.
     """
-    abc_curve = crud.get_abc_curve_for_composicoes(db, codigos=codigos, uf=uf, data_referencia=data_referencia, regime=regime)
+    abc_curve = crud.get_abc_curve_for_composicoes(db, codigos=payload.codigos, uf=uf, data_referencia=data_referencia, regime=regime)
     if not abc_curve:
         raise HTTPException(status_code=404, detail="Nenhum insumo encontrado para as composições e filtros especificados.")
     return abc_curve
@@ -470,7 +468,7 @@ def get_audit_trail(
 
 @app.post("/api/v1/public/bi/curva-abc/por-classificacao", response_model=List[schemas.AbcPorClassificacao], tags=["tier_2", "Business Intelligence"], summary="Calcular curva ABC por classificação", response_description="Curva ABC agregada por classificação de insumo.", responses=_RATE_LIMIT_RESPONSE)
 def get_abc_by_classificacao(
-    codigos: List[int] = Body(..., description="Lista de códigos de composições a serem analisadas.", example=[92711, 88307]),
+    payload: schemas.CurvaABCRequest,
     uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": "SP"}),
     data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": "2025-09"}),
     regime: str = Query("NAO_DESONERADO", description="Regime de preço.", examples={"exemplo": "NAO_DESONERADO"}),
@@ -481,7 +479,7 @@ def get_abc_by_classificacao(
     agregando todos os insumos de mesma categoria para mostrar
     quais classes de materiais dominam o custo.
     """
-    result = crud.get_abc_by_classificacao(db, codigos=codigos, uf=uf, data_referencia=data_referencia, regime=regime)
+    result = crud.get_abc_by_classificacao(db, codigos=payload.codigos, uf=uf, data_referencia=data_referencia, regime=regime)
     if not result:
         raise HTTPException(status_code=404, detail="Nenhuma classificação encontrada para as composições e filtros especificados.")
     return result

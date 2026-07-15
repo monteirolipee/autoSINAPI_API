@@ -9,7 +9,8 @@ O uso de `from_attributes = True` permite que os modelos sejam criados
 diretamente a partir de objetos do SQLAlchemy, facilitando a conversão dos
 resultados do banco de dados em JSON.
 """
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from pydantic_settings import SettingsConfigDict
 from typing import List, Optional
 from datetime import datetime
 
@@ -161,3 +162,26 @@ class InsumoOndeUsado(BaseModel):
     tipo_item: str
     coeficiente: float
     nivel: int
+
+
+# --- Schemas de Requisição (POST) ---
+# DTOs de entrada: usam model_config (Pydantic v2) com json_schema_extra para
+# expor exemplos visíveis no Swagger (SPEC-RULE Regra 2.3 / GUIDE 2.1.2).
+# Mantidos separados dos schemas de leitura (DDD: camada de aplicação vs domínio).
+
+class CurvaABCRequest(BaseModel):
+    """Corpo de requisição para cálculo de Curva ABC a partir de composições."""
+    model_config = SettingsConfigDict(
+        json_schema_extra={"example": {"codigos": [92711, 88307]}}
+    )
+    codigos: List[int]
+
+
+class PopulateDatabaseRequest(BaseModel):
+    """Corpo de requisição para disparar a população assíncrona da base SINAPI."""
+    model_config = SettingsConfigDict(
+        json_schema_extra={"example": {"year": 2025, "month": 9, "state": "SP"}}
+    )
+    year: int
+    month: int
+    state: str = Field(default="SP", min_length=2, max_length=2)
