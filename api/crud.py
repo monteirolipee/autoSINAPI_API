@@ -486,26 +486,40 @@ def get_audit_events(
     db: Session, tipo_item: str, codigo: int, data_referencia: str = None
 ) -> List[dict]:
     """
-    Retorna o histórico de auditoria para um item específico.
-    Cruzar record_pk com o código do item.
+    Retorna a trilha de auditoria (histórico de manutenções/retificacoes) de um
+    item. A tabela de auditoria por item é `manutencoes_historico`, que registra
+    ativacoes/desativacoes e retificacoes por data de referencia.
     """
-    query_str = """
-        SELECT id, table_name, record_pk, operation, 
-               old_values, new_values, sinapi_versao, 
-               motivo_manutencao, created_at
-        FROM sinapi_audit_log
-        WHERE (record_pk->>'codigo' = :codigo OR 
-               record_pk->>'insumo_codigo' = :codigo OR 
-               record_pk->>'composicao_codigo' = :codigo)
+    tipo = (tipo_item or "").upper()
+    if tipo not in ("INSUMO", "COMPOSICAO"):
+        tipo = tipo_item  # mantém o valor original; o filtro simplesmente não casará
+
+    query_str = f"""
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY data_referencia DESC) AS id,
+            'manutencoes_historico' AS table_name,
+            jsonb_build_object(
+                'item_codigo', item_codigo,
+                'tipo_item', tipo_item,
+                'data_referencia', TO_CHAR(data_referencia, 'YYYY-MM')
+            ) AS record_pk,
+            tipo_manutencao AS operation,
+            NULL AS old_values,
+            NULL AS new_values,
+            sinapi_versao,
+            descricao_item AS motivo_manutencao,
+            created_at
+        FROM {settings.TABLE_MANUTENCOES_HISTORICO}
+        WHERE item_codigo = :codigo AND tipo_item = :tipo
     """
-    params = {"codigo": str(codigo)}
-    
+    params = {"codigo": codigo, "tipo": tipo}
+
     if data_referencia:
-        query_str += " AND record_pk->>'data_referencia' = :data_ref"
+        query_str += " AND TO_CHAR(data_referencia, 'YYYY-MM') = :data_ref"
         params["data_ref"] = data_referencia
-    
-    query_str += " ORDER BY created_at DESC LIMIT 100"
-    
+
+    query_str += " ORDER BY data_referencia DESC LIMIT 100"
+
     query = text(query_str)
     result = db.execute(query, params).fetchall()
     return [dict(r._mapping) for r in result]
