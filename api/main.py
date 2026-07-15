@@ -266,9 +266,9 @@ def read_root():
 @app.get("/api/v1/public/insumos/{codigo}", response_model=schemas.Insumo, tags=["tier_1", "Insumos"], summary="Consultar insumo por código e contexto", response_description="Insumo e seu preço no contexto (UF, data, regime).", responses=_RATE_LIMIT_RESPONSE)
 def read_insumo_by_codigo(
     codigo: int,
-    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": "SP"}),
-    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": "2025-09"}),
-    regime: str = Query("NAO_DESONERADO", description="Regime de preço.", examples={"exemplo": "NAO_DESONERADO"}),
+    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
+    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de preço.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
     db: Session = Depends(get_db)
 ):
     """
@@ -282,9 +282,9 @@ def read_insumo_by_codigo(
 @app.get("/api/v1/public/insumos", response_model=List[schemas.Insumo], tags=["tier_1", "Insumos"], summary="Buscar insumos por descrição", response_description="Lista paginada de insumos que casam com a busca.", responses=_RATE_LIMIT_RESPONSE)
 def search_insumos(
     q: str = Query(..., min_length=3, description="Termo para buscar na descrição do insumo."),
-    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": "SP"}),
-    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": "2025-09"}),
-    regime: str = Query("NAO_DESONERADO", description="Regime de preço.", examples={"exemplo": "NAO_DESONERADO"}),
+    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
+    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de preço.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
     classificacao: str = Query(None, description="Filtrar por classificação do insumo. Ex: AGREGADOS, ACO, CONCRETO"),
     skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 ):
@@ -301,9 +301,9 @@ def search_insumos(
 @app.get("/api/v1/public/composicoes/{codigo}", response_model=schemas.Composicao, tags=["tier_1", "Composições"], summary="Consultar composição por código e contexto", response_description="Composição e seu custo no contexto informado.", responses=_RATE_LIMIT_RESPONSE)
 def read_composicao_by_codigo(
     codigo: int,
-    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": "SP"}),
-    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": "2025-09"}),
-    regime: str = Query("NAO_DESONERADO", description="Regime de custo.", examples={"exemplo": "NAO_DESONERADO"}),
+    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
+    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de custo.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
     db: Session = Depends(get_db)
 ):
     """
@@ -317,9 +317,9 @@ def read_composicao_by_codigo(
 @app.get("/api/v1/public/composicoes", response_model=List[schemas.Composicao], tags=["tier_1", "Composições"], summary="Buscar composições por descrição", response_description="Lista paginada de composições que casam com a busca.", responses=_RATE_LIMIT_RESPONSE)
 def search_composicoes(
     q: str = Query(..., min_length=3, description="Termo para buscar na descrição da composição."),
-    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": "SP"}),
-    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": "2025-09"}),
-    regime: str = Query("NAO_DESONERADO", description="Regime de custo.", examples={"exemplo": "NAO_DESONERADO"}),
+    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
+    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de custo.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
     grupo: str = Query(None, description="Filtrar por grupo da composição. Ex: SERVICOS, ESTRUTURA, INSTALACOES"),
     skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 ):
@@ -336,9 +336,9 @@ def search_composicoes(
 @app.get("/api/v1/public/bi/composicao/{codigo}/bom", response_model=List[schemas.ComposicaoBOMItem], tags=["tier_2", "Business Intelligence"], summary="Obter Bill of Materials da composição", response_description="Árvore completa de Bill of Materials (BOM) com impacto de custo.", responses=_RATE_LIMIT_RESPONSE)
 def get_composition_bom(
     codigo: int,
-    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": "SP"}),
-    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": "2025-09"}),
-    regime: str = Query("NAO_DESONERADO", description="Regime de custo/preço.", examples={"exemplo": "NAO_DESONERADO"}),
+    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
+    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de custo/preço.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
     db: Session = Depends(get_db)
 ):
     """
@@ -368,9 +368,9 @@ def get_composition_man_hours(codigo: int, db: Session = Depends(get_db)):
 @app.post("/api/v1/public/bi/curva-abc", response_model=List[schemas.CurvaABCItem], tags=["tier_2", "Business Intelligence"], summary="Calcular curva ABC de insumos", response_description="Curva ABC de insumos das composições informadas.", responses=_RATE_LIMIT_RESPONSE)
 def get_abc_curve(
     payload: schemas.CurvaABCRequest,
-    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": "SP"}),
-    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": "2025-09"}),
-    regime: str = Query("NAO_DESONERADO", description="Regime de preço.", examples={"exemplo": "NAO_DESONERADO"}),
+    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
+    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de preço.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
     db: Session = Depends(get_db)
 ):
     """
@@ -385,9 +385,9 @@ def get_abc_curve(
 @app.get("/api/v1/public/bi/composicao/{codigo}/otimizar", response_model=List[schemas.ComposicaoBOMItem], tags=["tier_2", "Business Intelligence"], summary="Obter candidatos para otimização", response_description="Top-N insumos de maior impacto financeiro (foco de otimização).", responses=_RATE_LIMIT_RESPONSE)
 def get_optimization_candidates(
     codigo: int,
-    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": "SP"}),
-    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": "2025-09"}),
-    regime: str = Query("NAO_DESONERADO", description="Regime de custo/preço.", examples={"exemplo": "NAO_DESONERADO"}),
+    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
+    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de custo/preço.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
     top_n: int = Query(5, description="Número de principais insumos a serem retornados."),
     db: Session = Depends(get_db)
 ):
@@ -403,9 +403,9 @@ def get_optimization_candidates(
 def get_item_cost_history(
     tipo_item: str = Path(..., description="Tipo do item: 'insumo' ou 'composicao'"),
     codigo: int = Path(..., description="Código do item."),
-    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": "SP"}),
-    regime: str = Query("NAO_DESONERADO", description="Regime de custo/preço.", examples={"exemplo": "NAO_DESONERADO"}),
-    data_fim: str = Query(f"{date.today():%Y-%m}", description="Data final (AAAA-MM) da análise."),
+    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de custo/preço.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
+    data_fim: str = Query(f"{date.today():%Y-%m}", description="Data final (AAAA-MM) da análise.", examples={"exemplo": {"value": "2025-09"}}),
     meses: int = Query(12, description="Número de meses a serem analisados para trás."),
     db: Session = Depends(get_db)
 ):
@@ -452,7 +452,7 @@ def get_item_maintenance_history(
 def get_audit_trail(
     tipo_item: str = Path(..., description="Tipo do item: 'insumo' ou 'composicao'"),
     codigo: int = Path(..., description="Código do item."),
-    data_referencia: str = Query(None, description="Filtrar por data de referência (AAAA-MM)."),
+    data_referencia: str = Query(None, description="Filtrar por data de referência (AAAA-MM).", examples={"exemplo": {"value": "2025-09"}}),
     db: Session = Depends(get_db)
 ):
     """
@@ -469,9 +469,9 @@ def get_audit_trail(
 @app.post("/api/v1/public/bi/curva-abc/por-classificacao", response_model=List[schemas.AbcPorClassificacao], tags=["tier_2", "Business Intelligence"], summary="Calcular curva ABC por classificação", response_description="Curva ABC agregada por classificação de insumo.", responses=_RATE_LIMIT_RESPONSE)
 def get_abc_by_classificacao(
     payload: schemas.CurvaABCRequest,
-    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": "SP"}),
-    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": "2025-09"}),
-    regime: str = Query("NAO_DESONERADO", description="Regime de preço.", examples={"exemplo": "NAO_DESONERADO"}),
+    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
+    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de preço.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
     db: Session = Depends(get_db)
 ):
     """
@@ -486,9 +486,9 @@ def get_abc_by_classificacao(
 
 @app.get("/api/v1/public/bi/tendencias/por-classificacao", response_model=List[schemas.TendenciaClassificacao], tags=["tier_2", "Business Intelligence"], summary="Obter tendências por classificação", response_description="Evolução mensal de preço/custo agrupada por classificação/grupo/item.", responses=_RATE_LIMIT_RESPONSE)
 def get_tendencias_classificacao(
-    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": "SP"}),
-    data_referencia: str = Query(..., description="Data de referência final no formato AAAA-MM. Ex: 2025-09"),
-    regime: str = Query("NAO_DESONERADO", description="Regime de preço.", examples={"exemplo": "NAO_DESONERADO"}),
+    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
+    data_referencia: str = Query(..., description="Data de referência final no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de preço.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
     agrupar_por: str = Query("classificacao", description="Campo para agrupamento: 'classificacao' (Insumos), 'grupo' (Composições) ou 'item' (Itens individuais)."),
     codigos: Optional[str] = Query(None, description="Lista de códigos separados por vírgula para filtrar itens específicos."),
     meses: int = Query(12, description="Número de meses a serem analisados para trás."),
@@ -514,8 +514,8 @@ def get_tendencias_classificacao(
 def get_item_prices_all_ufs(
     tipo_item: str = Path(..., description="Tipo do item: 'insumo' ou 'composicao'"),
     codigo: int = Path(..., description="Código do item."),
-    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": "2025-09"}),
-    regime: str = Query("NAO_DESONERADO", description="Regime de custo/preço.", examples={"exemplo": "NAO_DESONERADO"}),
+    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de custo/preço.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
     db: Session = Depends(get_db)
 ):
     """
@@ -532,9 +532,9 @@ def get_item_prices_all_ufs(
 @app.get("/api/v1/public/bi/composicao/{codigo}/produtividade", response_model=schemas.ComposicaoProdutividade, tags=["tier_2", "Business Intelligence"], summary="Obter análise de produtividade", response_description="Análise de produtividade (Mão de Obra / Material / Equipamento).", responses=_RATE_LIMIT_RESPONSE)
 def get_composition_productivity(
     codigo: int,
-    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": "SP"}),
-    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": "2025-09"}),
-    regime: str = Query("NAO_DESONERADO", description="Regime de custo/preço.", examples={"exemplo": "NAO_DESONERADO"}),
+    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
+    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de custo/preço.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
     db: Session = Depends(get_db)
 ):
     """
