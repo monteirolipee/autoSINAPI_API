@@ -185,3 +185,30 @@ class PopulateDatabaseRequest(BaseModel):
     year: int
     month: int
     state: str = Field(default="SP", min_length=2, max_length=2)
+
+
+class PlanInfo(BaseModel):
+    slug: str
+    name: str
+    price_cents: int
+
+
+class QuotaInfo(BaseModel):
+    used: int
+    limit: int
+    percentage: float
+
+
+class PortalLinks(BaseModel):
+    upgrade: dict
+    downgrade: Optional[str] = None
+    renew: str
+
+
+class PortalResponse(BaseModel):
+    client_id: str
+    plan: PlanInfo
+    subscription: dict
+    quota: QuotaInfo
+    features: dict
+    links: PortalLinks

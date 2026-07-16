@@ -28,6 +28,7 @@ from . import crud, schemas, config
 from .database import get_db
 from .tasks import populate_sinapi_task
 from .cache_utils import redis_client as cache_redis
+from .portal import router as portal_router
 
 # Carrega as configurações uma vez
 settings = config.settings
@@ -149,6 +150,8 @@ import os
 _data_dir = os.path.join(os.path.dirname(__file__), "..", "demo", "data")
 if os.path.isdir(_data_dir):
     app.mount("/api/v1/public/data/geo", StaticFiles(directory=_data_dir), name="data")
+
+app.include_router(portal_router)
 
 # Request logging middleware
 @app.middleware("http")
