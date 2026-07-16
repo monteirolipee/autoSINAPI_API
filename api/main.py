@@ -88,15 +88,8 @@ _AUTH_DOCS = _AUTH_SECTION + _ERROR_SECTION + _TIER_SECTION
 
 # Respostas de erro retornadas pelo gateway Kong + plugin ssl-mp-adapter.
 # SSOT do contrato de erro reutilizada por todos os endpoints (coesão/DRY).
-_AUTH_RESPONSES = {
-    401: {"description": "API key ausente ou inválida (header X-API-KEY)."},
-    402: {"description": "Assinatura inativa ou expirada. Renove em https://autosinapi.mundoaec.com/checkout."},
-    429: {"description": "Limite de requisições excedido (rate limit do plano ou demo)."},
-}
-# Apenas o erro de rate limit se aplica aos endpoints públicos (demo 15/min).
-_RATE_LIMIT_RESPONSE = {
-    429: {"description": "Limite de requisições excedido (demonstração: 15 req/min, 300 req/hour)."},
-}
+# Definidas em schemas.py para evitar import circular com portal.py.
+from .schemas import _AUTH_RESPONSES, _RATE_LIMIT_RESPONSE
 
 app = FastAPI(
     title="AutoSINAPI API",

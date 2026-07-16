@@ -14,6 +14,18 @@ from pydantic_settings import SettingsConfigDict
 from typing import List, Optional
 from datetime import datetime
 
+# --- SSOT: HTTP response contracts (auth / rate-limit) ---
+# Centralizado aqui para evitar import circular entre main.py e portal.py.
+_AUTH_RESPONSES = {
+    401: {"description": "API key ausente ou inválida (header X-API-KEY)."},
+    402: {"description": "Assinatura inativa ou expirada. Renove em https://autosinapi.mundoaec.com/checkout."},
+    429: {"description": "Limite de requisições excedido (rate limit do plano ou demo)."},
+}
+# Apenas o erro de rate limit se aplica aos endpoints públicos (demo 15/min).
+_RATE_LIMIT_RESPONSE = {
+    429: {"description": "Limite de requisições excedido (demonstração: 15 req/min, 300 req/hour)."},
+}
+
 # --- Traceability Mixin ---
 class TraceabilityMixin(BaseModel):
     created_at: Optional[datetime] = None

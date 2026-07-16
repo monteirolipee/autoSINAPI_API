@@ -5,18 +5,17 @@ from sqlalchemy.orm import Session
 
 from . import schemas
 from .database import get_db
+from .schemas import _RATE_LIMIT_RESPONSE, _AUTH_RESPONSES
 
 router = APIRouter(tags=["tier_1", "Portal"])
 
 
 @router.get(
-    "/api/v1/portal/me",
+    "/api/v1/public/portal/me",
     summary="Obter dados do portal do assinante",
     response_description="Plano, validade, quota usada/limite, features e links de upgrade/downgrade",
     response_model=schemas.PortalResponse,
-    responses={
-        401: {"description": "API key ausente ou inválida (header X-API-KEY)."},
-    },
+    responses={**_AUTH_RESPONSES, **_RATE_LIMIT_RESPONSE},
 )
 def portal_me(
     x_api_key: str = Header(..., alias="X-API-KEY"),
@@ -24,7 +23,7 @@ def portal_me(
 ):
     key_row = db.execute(
         text("""
-            SELECT k.id as key_id, k.client_id, k.subscription_id,
+            SELECT k.id as key_id, k.client_id::text as client_id, k.subscription_id,
                    k.status as key_status,
                    s.status as sub_status,
                    s.current_period_start, s.current_period_end,

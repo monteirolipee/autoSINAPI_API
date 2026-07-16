@@ -24,7 +24,7 @@ RUN apt-get update && \
 COPY ./api /app/api
 
 # Estágio 4: Segurança e Execução
-RUN apt-get update && apt-get install -y wget procps --no-install-recommends && \
+RUN apt-get update && apt-get install -y wget procps util-linux gdb --no-install-recommends && \
     pip install --no-cache-dir py-spy memray && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \

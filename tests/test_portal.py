@@ -2,7 +2,7 @@
 Testes para STORY-PRICE-006: Portal mínimo do usuário.
 
 Valida:
-1. Endpoint /api/v1/portal/me documentado no OpenAPI com tags corretas
+1. Endpoint /api/v1/public/portal/me documentado no OpenAPI com tags corretas
 2. Schema PortalResponse serializa/valida corretamente
 3. Endpoint retorna 401 sem X-API-KEY
 4. Endpoint retorna estrutura JSON esperada
@@ -22,29 +22,29 @@ def openapi():
 
 class TestPortalOpenAPI:
     def test_portal_endpoint_documented(self, openapi):
-        assert "/api/v1/portal/me" in openapi["paths"], (
-            "Endpoint /api/v1/portal/me ausente no OpenAPI"
+        assert "/api/v1/public/portal/me" in openapi["paths"], (
+            "Endpoint /api/v1/public/portal/me ausente no OpenAPI"
         )
 
     def test_portal_endpoint_tags(self, openapi):
-        methods = openapi["paths"]["/api/v1/portal/me"]
+        methods = openapi["paths"]["/api/v1/public/portal/me"]
         for method, details in methods.items():
             if method == "parameters":
                 continue
             tags = details.get("tags", [])
             assert len(tags) >= 1
             assert tags[0] == "tier_1", (
-                f"{method.upper()} /api/v1/portal/me: primeira tag deve ser tier_1"
+                f"{method.upper()} /api/v1/public/portal/me: primeira tag deve ser tier_1"
             )
 
     def test_portal_endpoint_summary(self, openapi):
-        get_spec = openapi["paths"]["/api/v1/portal/me"]["get"]
+        get_spec = openapi["paths"]["/api/v1/public/portal/me"]["get"]
         summary = get_spec.get("summary", "")
         assert len(summary) > 0, "summary deve estar presente"
         assert len(summary) <= 80, f"summary deve ter <= 80 chars (tem {len(summary)})"
 
     def test_portal_endpoint_has_x_api_key_header(self, openapi):
-        get_spec = openapi["paths"]["/api/v1/portal/me"]["get"]
+        get_spec = openapi["paths"]["/api/v1/public/portal/me"]["get"]
         params = get_spec.get("parameters", [])
         header_names = [p["name"] for p in params if p.get("in") == "header"]
         assert "X-API-KEY" in header_names, (
@@ -52,14 +52,14 @@ class TestPortalOpenAPI:
         )
 
     def test_portal_endpoint_has_401_response(self, openapi):
-        get_spec = openapi["paths"]["/api/v1/portal/me"]["get"]
+        get_spec = openapi["paths"]["/api/v1/public/portal/me"]["get"]
         responses = get_spec.get("responses", {})
         assert "401" in responses, (
             "Endpoint deve documentar resposta 401 (não autenticado)"
         )
 
     def test_portal_endpoint_has_200_response(self, openapi):
-        get_spec = openapi["paths"]["/api/v1/portal/me"]["get"]
+        get_spec = openapi["paths"]["/api/v1/public/portal/me"]["get"]
         responses = get_spec.get("responses", {})
         assert "200" in responses, (
             "Endpoint deve documentar resposta 200 (sucesso)"
