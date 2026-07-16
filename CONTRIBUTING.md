@@ -59,6 +59,30 @@ O core de processamento de dados (`AutoSINAPI/`) é um **submódulo Git** vincul
 
 ---
 
+## 🔄 Geração da OpenAPI Spec (STORY-INFRA-004 / ADR-010)
+
+A spec versionada (`docs/openapi.yaml`) é o **SSOT** e vive no repo da **STACK**
+(`stacks/autosinapi/`), não aqui. A separação é deliberada:
+
+- **Este repo (API)** possui a *lógica de geração*: `scripts/generate_openapi.sh`
+  (extrai `/openapi.json` do runtime e converte para YAML idempotente) e o teste
+  contratual `tests/test_openapi_generation.py` (TDD, valida SPEC-RULE 1.1/2.1/2.2/2.4/2.5/2.6).
+- **Repo da STACK** orquestra a geração em CI (`.github/workflows/openapi-generation.yml`)
+  e valida com `.spectral.yaml` (Regra 6.1, bloqueante) antes de versionar o SSOT.
+
+**Segredos:** `AUTOSINAPI_STACK_APP_TOKEN` (GitHub App de escopo mínimo), `API_REPO`
+e `API_REF` são propriedade do repo da STACK — **não** deste repo. A API é clonada
+em modo read-only pelo workflow da STACK. Não adicione PAT de escrita da STACK
+aqui.
+
+**Local (dev):** para regenerar o SSOT manualmente a partir de um container da API
+em execução:
+```bash
+API_CONTAINER=autosinapi_api bash scripts/generate_openapi.sh <caminho>/docs/openapi.yaml
+```
+
+---
+
 ## Submetendo Alterações
 
 1. Desenvolva as alterações em sua branch local (`git checkout -b feature/minha-feature`).
