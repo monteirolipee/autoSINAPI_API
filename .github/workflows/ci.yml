@@ -36,6 +36,22 @@ jobs:
         # Rodamos um comando simplificado apenas para verificar se o motor do Toolkit liga corretamente dentro do container da API
         docker compose run --rm api python3 -c "from autosinapi.etl_pipeline import PipelineETL; print('✅ Toolkit importado com sucesso na API')"
       
+    - name: Run API contract tests
+      run: |
+        echo "🧪 Executando suíte de testes de contrato (OpenAPI/STORY-API/portal)..."
+        docker compose run --rm \
+          -v "$PWD:/app:ro" \
+          -e DATABASE_URL=postgresql://admin:change-in-production-db-pass@db:5432/sinapi \
+          api sh -c "pip install -r requirements-dev.txt && pytest \
+            tests/test_openapi_generation.py \
+            tests/test_response_contracts.py \
+            tests/test_auth_errors_docs.py \
+            tests/test_endpoint_summaries.py \
+            tests/test_parameter_examples.py \
+            tests/test_post_schemas.py \
+            tests/test_tier_tags.py \
+            tests/test_portal.py -q"
+
     - name: Cleanup
       if: always()
       run: docker compose down -v
