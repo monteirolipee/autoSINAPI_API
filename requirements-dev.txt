@@ -1,0 +1,6 @@
+# requirements-dev.txt
+# Dependências de teste (não inclusas na imagem de runtime da API).
+# Usadas no CI e localmente para rodar a suíte de testes de contrato.
+pytest
+pytest-mock
+httpx

@@ -1,6 +1,6 @@
 # Plano de Trabalho da AutoSINAPI API — Status Atual
 
-> **Data:** 22/05/2026
+> **Data:** 15/07/2026
 > **Repositório:** `repos/autosinapi_api`
 
 ---
@@ -47,6 +47,11 @@
 | Cache decorator | `@cache_result` com TTL configurável | ✅ |
 | Invalidação de cache | `invalidate_cache(pattern)` com scan+cursor | ✅ NOVO |
 | Alembic | `alembic/` — migrations com schema inicial + view | ✅ NOVO |
+
+### OpenAPI / Documentação
+| Item | Descrição | Status |
+|---|---|---|
+| Tags de tier nos endpoints | 22 endpoints com `tags=["tier_X", "Categoria"]` (STORY-API-001) | ✅ NOVO |
 
 ---
 
@@ -142,7 +147,9 @@ api/
 └── sandbox_utils.py # Modo sandbox para tabelas isoladas
 tests/
 ├── test_cache.py    # 4 testes de cache com mock
-└── test_etl_integration.py  # 1 teste de integração ETL
+├── test_etl_integration.py  # 1 teste de integração ETL
+├── test_tier_tags.py   # 4 testes de validação de tier tags (STORY-API-001)
+└── test_traceability_api.py  # Testes de traceability
 alembic/
 ├── alembic.ini
 ├── env.py
@@ -184,5 +191,6 @@ demo/
 | `docs/workplans/SPRINT_202605_API_DEMO_ENHANCEMENT.md` | Plano de trabalho desta sessão (Fases 1-5) |
 | `docs/workplans/SPRINT_202605_AUTOSINAPI_PROFESSIONALIZATION.md` | Sprint de profissionalização da API |
 | `docs/plans/SPRINT_HEATMAP_LEAFLET.md` | Plano do mapa Leaflet |
+| `docs/loops/HANDOFF_TIER_TAGS_20260715.md` | Handoff STORY-API-001 — Tags de tier |
 | `AutoSINAPI/docs/SPRINT_ETL_ENRICHMENT.md` | **Sprint do ETL — pendente (outra sessão)** |
 | `AutoSINAPI/docs/DataModel.md` | Modelo de dados do toolkit |

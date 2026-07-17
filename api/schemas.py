@@ -9,9 +9,31 @@ O uso de `from_attributes = True` permite que os modelos sejam criados
 diretamente a partir de objetos do SQLAlchemy, facilitando a conversão dos
 resultados do banco de dados em JSON.
 """
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from pydantic_settings import SettingsConfigDict
 from typing import List, Optional
 from datetime import datetime
+
+# --- SSOT: HTTP response contracts (auth / rate-limit) ---
+# Centralizado aqui para evitar import circular entre main.py e portal.py.
+_AUTH_RESPONSES = {
+    401: {"description": "API key ausente ou inválida (header X-API-KEY)."},
+    402: {"description": "Assinatura inativa ou expirada. Renove em https://autosinapi.mundoaec.com/checkout."},
+    429: {"description": "Limite de requisições excedido (rate limit do plano ou demo)."},
+}
+# Apenas o erro de rate limit se aplica aos endpoints públicos (demo 15/min).
+_RATE_LIMIT_RESPONSE = {
+    429: {"description": "Limite de requisições excedido (demonstração: 15 req/min, 300 req/hour)."},
+}
+# Erros levantados pelo próprio FastAPI (HTTPException) — SSOT reutilizada nos
+# endpoints que de fato os produzem (coesão/DRY, STORY-API-006).
+_NOT_FOUND_404 = {"description": "Recurso não encontrado para os filtros informados."}
+_BAD_REQUEST_400 = {"description": "Parâmetro inválido (tipo_item ou data_fim)."}
+_CONFLICT_409 = {"description": "Já existe tarefa em andamento para o período/UF (lock)."}
+_SERVER_ERROR_500 = {"description": "Erro interno ao enfileirar a tarefa de ETL."}
+_SERVICE_UNAVAILABLE_503 = {
+    "description": "Serviço degradado: banco de dados ou Redis indisponível.",
+}
 
 # --- Traceability Mixin ---
 class TraceabilityMixin(BaseModel):
@@ -161,3 +183,53 @@ class InsumoOndeUsado(BaseModel):
     tipo_item: str
     coeficiente: float
     nivel: int
+
+
+# --- Schemas de Requisição (POST) ---
+# DTOs de entrada: usam model_config (Pydantic v2) com json_schema_extra para
+# expor exemplos visíveis no Swagger (SPEC-RULE Regra 2.3 / GUIDE 2.1.2).
+# Mantidos separados dos schemas de leitura (DDD: camada de aplicação vs domínio).
+
+class CurvaABCRequest(BaseModel):
+    """Corpo de requisição para cálculo de Curva ABC a partir de composições."""
+    model_config = SettingsConfigDict(
+        json_schema_extra={"example": {"codigos": [92711, 88307]}}
+    )
+    codigos: List[int]
+
+
+class PopulateDatabaseRequest(BaseModel):
+    """Corpo de requisição para disparar a população assíncrona da base SINAPI."""
+    model_config = SettingsConfigDict(
+        json_schema_extra={"example": {"year": 2025, "month": 9, "state": "SP"}}
+    )
+    year: int
+    month: int
+    state: str = Field(default="SP", min_length=2, max_length=2)
+
+
+class PlanInfo(BaseModel):
+    slug: str
+    name: str
+    price_cents: int
+
+
+class QuotaInfo(BaseModel):
+    used: int
+    limit: int
+    percentage: float
+
+
+class PortalLinks(BaseModel):
+    upgrade: dict
+    downgrade: Optional[str] = None
+    renew: str
+
+
+class PortalResponse(BaseModel):
+    client_id: str
+    plan: PlanInfo
+    subscription: dict
+    quota: QuotaInfo
+    features: dict
+    links: PortalLinks

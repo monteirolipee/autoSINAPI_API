@@ -1,64 +1,94 @@
-# Como Contribuir com o autoSINAPI_API
+# Como Contribuir com o AutoSINAPI
 
-Ficamos muito felizes com seu interesse em contribuir! Este documento fornece as diretrizes para garantir que o processo seja o mais simples e consistente possível.
-
-## Como Começar
-
-1.  **Faça um Fork** do repositório para a sua própria conta do GitHub.
-2.  **Clone** o seu fork para a sua máquina local.
-3.  **Siga as instruções de setup** no arquivo `README.md` para configurar o ambiente de desenvolvimento com Docker. É rápido e garante que todos usem a mesma base.
+Ficamos muito felizes com seu interesse em contribuir! Este documento fornece as diretrizes para garantir que o processo de desenvolvimento seja o mais coerente, coeso, compatível e sustentável possível.
 
 ---
 
-## Padrão de Desenvolvimento
+## 📖 Filosofia de Desenvolvimento: Document-First (DDD)
 
-Para manter o projeto organizado e consistente, seguimos algumas convenções.
+Adotamos a metodologia **Document-Driven Development (DDD)** como principal fonte de verdade:
+1. **Nenhum código é escrito sem documentação prévia:** A documentação em `docs/` de cada projeto é o artefato primário.
+2. **Definição prévia de ADRs:** Qualquer mudança de arquitetura deve ser registrada em um documento ADR (Architecture Decision Record) local antes de iniciar a escrita de código.
+3. **RalphLoops de Qualidade:** Cada ciclo de desenvolvimento deve passar por:
+   * **Audit (Auditoria):** Mapeamento do estado atual e identificação de falhas/gaps.
+   * **Handoff (Entrega):** Documentação explícita de novos contratos de Portas & Adaptadores.
+   * **Review (Revisão):** Validação técnica das decisões arquiteturais tomadas.
 
-### 1. Nomenclatura de Branches (Git)
+---
+
+## 🛠️ Nomenclatura de Branches (Git)
 
 Adotamos um fluxo de trabalho baseado no Git Flow simplificado.
 
 -   **`main`**: Contém o código estável e de produção.
--   **`develop`**: Branch principal de desenvolvimento. Onde novas funcionalidades são integradas.
--   **`feature/<nome-da-feature>`**: Para o desenvolvimento de novas funcionalidades (ex: `feature/analise-de-impacto`).
--   **`fix/<nome-da-correcao>`**: Para correções de bugs não críticos (ex: `fix/query-performance-insumos`).
+-   **`develop`**: Branch principal de desenvolvimento.
+-   **`feature/<nome-da-feature>`**: Para novas funcionalidades (ex: `feature/analise-de-impacto`).
+-   **`fix/<nome-da-correcao>`**: Para correções de bugs (ex: `fix/query-performance-insumos`).
 -   **`hotfix/<descricao-curta>`**: Para correções críticas em produção.
--   **`docs/<descricao-curta>`**: Para adicionar ou melhorar a documentação (ex: `docs/ajustar-readme`).
+-   **`docs/<descricao-curta>`**: Para atualizações da documentação.
 
-### 2. Mensagens de Commit (Conventional Commits)
+---
 
-Utilizamos o padrão [Conventional Commits](https://www.conventionalcommits.org/) para padronizar as mensagens.
+## 📝 Mensagens de Commit (Rastreabilidade por Badges)
 
-**Formato:** `<tipo>(<escopo>): <descrição>`
+Para manter os commits claros e vinculados aos objetivos ágeis do projeto, as mensagens devem seguir a estrutura:
 
--   **`<tipo>`**: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`.
--   **`<escopo>` (opcional)**: Onde a mudança ocorreu. Escopos sugeridos:
-    -   `project`: Mudanças que afetam a estrutura geral ou múltiplos locais.
-    -   `api`: Lógica da API FastAPI (`main.py`, `schemas.py`).
-    -   `bi`: Lógica de Business Intelligence (`crud.py`).
-    -   `infra`: Arquivos de infraestrutura (`docker-compose.yml`, `Dockerfile`).
-    -   `deps`: Atualização de dependências (`requirements.txt`).
+`[tipo]([escopo]): [[EPIC]] [[SPRINT]] [[STORY]] [comentário]`
 
-### 3. Padrões de Código e Infraestrutura
+*   **`[tipo]`**: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`.
+*   **`[escopo]`**: Onde a mudança ocorreu (ex: `etl`, `api`, `gateway`, `infra`).
+*   **`[EPIC]`**: Código/identificador do Epic ágil (ex: `CORE-API`, `ETL-PERF`, `SAAS-BILL`).
+*   **`[SPRINT]`**: Número ou código da Sprint (ex: `SPRINT-01`).
+*   **`[STORY]`**: Identificador da User Story ou Task (ex: `US-02`).
 
--   **Python (API e Worker)**: O código segue o padrão **PEP 8**. Usamos `snake_case` para variáveis e funções e `PascalCase` para classes.
--   **Infraestrutura (Docker & Kong)**: Nomes de serviços e contêineres devem ser em `snake_case` e descritivos (ex: `celery_worker`, `sinapi_gateway`).
+### Exemplo Real de Commit:
+```bash
+git commit -m "feat(api): [CORE-API] [SPRINT-01] [US-02] converter conexao sqlalchemy para assincrona com asyncpg"
+```
 
-### 4. Trabalhando com o Toolkit (Submódulo)
+---
+
+## 📦 Estrutura dos Repositórios (Toolkit Submodule)
 
 O core de processamento de dados (`AutoSINAPI/`) é um **submódulo Git** vinculado ao repositório [AutoSINAPI](https://github.com/LAMP-LUCAS/AutoSINAPI).
 
-- **Mudanças no Core:** Devem ser commitadas e enviadas para o repositório do Toolkit.
-- **Mudanças na API:** Devem ser commitadas neste repositório.
-- **Sincronia:** Se você atualizar o Toolkit, lembre-se de atualizar o ponteiro do submódulo neste repositório com um commit de "update submodule".
+- **Desenvolvimento de ETL:** Deve ser commitado e enviado para o repositório do Toolkit (`AutoSINAPI/`).
+- **Desenvolvimento da API:** Deve ser commitado no repositório `autosinapi_api`.
+- **Independência:** Cada repositório mantém sua própria pasta `docs/` seguindo o template padrão local para manter a coesão sem acoplar os contextos.
+- **Sincronia:** Se você atualizar o Toolkit, envie o PR correspondente no submódulo e depois execute o commit de atualização do ponteiro do submódulo neste repositório.
+
+---
+
+## 🔄 Geração da OpenAPI Spec (STORY-INFRA-004 / ADR-010)
+
+A spec versionada (`docs/openapi.yaml`) é o **SSOT** e vive no repo da **STACK**
+(`stacks/autosinapi/`), não aqui. A separação é deliberada:
+
+- **Este repo (API)** possui a *lógica de geração*: `scripts/generate_openapi.sh`
+  (extrai `/openapi.json` do runtime e converte para YAML idempotente) e o teste
+  contratual `tests/test_openapi_generation.py` (TDD, valida SPEC-RULE 1.1/2.1/2.2/2.4/2.5/2.6).
+- **Repo da STACK** orquestra a geração em CI (`.github/workflows/openapi-generation.yml`)
+  e valida com `.spectral.yaml` (Regra 6.1, bloqueante) antes de versionar o SSOT.
+
+**Segredos:** `AUTOSINAPI_STACK_APP_TOKEN` (GitHub App de escopo mínimo), `API_REPO`
+e `API_REF` são propriedade do repo da STACK — **não** deste repo. A API é clonada
+em modo read-only pelo workflow da STACK. Não adicione PAT de escrita da STACK
+aqui.
+
+**Local (dev):** para regenerar o SSOT manualmente a partir de um container da API
+em execução:
+```bash
+API_CONTAINER=autosinapi_api bash scripts/generate_openapi.sh <caminho>/docs/openapi.yaml
+```
 
 ---
 
 ## Submetendo Alterações
 
-1.  Após implementar sua funcionalidade ou correção, faça o commit das suas alterações seguindo o padrão acima.
-2.  Envie as alterações para o seu fork (`git push origin feature/<nome-da-feature>`).
-3.  Abra um **Pull Request (PR)** do seu fork para a branch `develop` do repositório principal.
-4.  No PR, descreva claramente o que foi feito e por quê.
+1. Desenvolva as alterações em sua branch local (`git checkout -b feature/minha-feature`).
+2. Atualize o arquivo respectivo em `docs/` antes ou durante o desenvolvimento.
+3. Faça o commit seguindo a convenção de badges acima.
+4. Envie as alterações para o seu fork (`git push origin feature/minha-feature`).
+5. Abra um **Pull Request (PR)** para a branch `develop` do repositório correspondente.
 
-Obrigado por sua contribuição!
+Obrigado por ajudar a construir a autoSINAPI!
