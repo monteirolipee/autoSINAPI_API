@@ -16,9 +16,18 @@ from celery.result import AsyncResult
 from .sandbox_utils import is_sandbox_mode
 from typing import List, Optional
 from contextlib import asynccontextmanager
-import sentry_sdk
-from prometheus_fastapi_instrumentator import Instrumentator
-from prometheus_client import Gauge
+try:
+    import sentry_sdk
+except ImportError:
+    sentry_sdk = None
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+except ImportError:
+    Instrumentator = None
+try:
+    from prometheus_client import Gauge
+except ImportError:
+    Gauge = None
 from fastapi import FastAPI, Depends, HTTPException, Query, Path, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -168,22 +177,30 @@ if os.path.isdir(_data_dir):
 app.include_router(portal_router)
 
 # ── Métricas Prometheus (consumido pelo Netdata go.d prometheus collector) ──
-instrumentator = Instrumentator(
-    should_group_status_codes=False,
-    should_ignore_untemplated=True,
-    excluded_handlers=["/metrics"],
-).instrument(app)
+if Instrumentator is not None:
+    instrumentator = Instrumentator(
+        should_group_status_codes=False,
+        should_ignore_untemplated=True,
+        excluded_handlers=["/metrics"],
+    ).instrument(app)
+else:
+    instrumentator = None
+    logger.warning("prometheus-fastapi-instrumentator not installed; /metrics disabled")
 
 # ── Gauge de quota utilizada por assinatura (STORY-GOLIVE-03 / REGRA 8) ──
-QUOTA_GAUGE = Gauge(
-    "autosinapi_quota_usage_ratio",
-    "Uso percentual da cota mensal por assinatura ativa",
-    ["client", "plan"],
-)
+if Gauge is not None:
+    QUOTA_GAUGE = Gauge(
+        "autosinapi_quota_usage_ratio",
+        "Uso percentual da cota mensal por assinatura ativa",
+        ["client", "plan"],
+    )
+else:
+    QUOTA_GAUGE = None
+    logger.warning("prometheus_client not installed; quota gauge disabled")
 
 
 def _init_sentry():
-    if settings.SENTRY_DSN:
+    if settings.SENTRY_DSN and sentry_sdk is not None:
         sentry_sdk.init(
             dsn=settings.SENTRY_DSN,
             environment=settings.SENTRY_ENV,
@@ -221,11 +238,11 @@ def _update_quota_gauges(stop_event: threading.Event):
                 )
             ).fetchall()
 
-            # Reset gauge before re-populating to avoid stale labels
-            QUOTA_GAUGE.clear()
-            for row in rows:
-                pct = (row.total_usage / row.monthly_quota * 100) if row.monthly_quota > 0 else 0.0
-                QUOTA_GAUGE.labels(client=row.client_name, plan=row.plan_slug).set(pct)
+            if QUOTA_GAUGE is not None:
+                QUOTA_GAUGE.clear()
+                for row in rows:
+                    pct = (row.total_usage / row.monthly_quota * 100) if row.monthly_quota > 0 else 0.0
+                    QUOTA_GAUGE.labels(client=row.client_name, plan=row.plan_slug).set(pct)
         except Exception:
             logger.warning("Quota gauge update failed (DB likely unavailable)", exc_info=True)
         finally:
@@ -236,12 +253,14 @@ def _update_quota_gauges(stop_event: threading.Event):
 # ── Startup event (Sentry, metrics, background gauge) ──
 @app.on_event("startup")
 async def _on_startup():
-    instrumentator.expose(app)
+    if instrumentator is not None:
+        instrumentator.expose(app)
     _init_sentry()
-    stop_ev = threading.Event()
-    thr = threading.Thread(target=_update_quota_gauges, args=(stop_ev,), daemon=True)
-    thr.start()
-    logger.info("Gauge updater thread started")
+    if QUOTA_GAUGE is not None:
+        stop_ev = threading.Event()
+        thr = threading.Thread(target=_update_quota_gauges, args=(stop_ev,), daemon=True)
+        thr.start()
+        logger.info("Gauge updater thread started")
 
 
 # ── Admin auth dependency (STORY-GOLIVE-03) ──
