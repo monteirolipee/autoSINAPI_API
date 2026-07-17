@@ -10,4 +10,6 @@ pydantic-settings
 pandas
 python-dateutil
 alembic
+prometheus-fastapi-instrumentator
+sentry-sdk
 # Instala o toolkit autoSINAPI via Dockerfile (./AutoSINAPI)

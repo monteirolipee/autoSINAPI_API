@@ -15,7 +15,11 @@ import redis
 from celery.result import AsyncResult
 from .sandbox_utils import is_sandbox_mode
 from typing import List, Optional
-from fastapi import FastAPI, Depends, HTTPException, Query, Path, Request
+from contextlib import asynccontextmanager
+import sentry_sdk
+from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_client import Gauge
+from fastapi import FastAPI, Depends, HTTPException, Query, Path, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,11 +28,12 @@ from sqlalchemy.orm import Session
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 
-from . import crud, schemas, config
+from . import crud, schemas, config, populate_utils
 from .database import get_db
 from .tasks import populate_sinapi_task
 from .cache_utils import redis_client as cache_redis
 from .portal import router as portal_router
+import threading
 
 # Carrega as configurações uma vez
 settings = config.settings
@@ -162,6 +167,98 @@ if os.path.isdir(_data_dir):
 
 app.include_router(portal_router)
 
+# ── Métricas Prometheus (consumido pelo Netdata go.d prometheus collector) ──
+instrumentator = Instrumentator(
+    should_group_status_codes=False,
+    should_ignore_untemplated=True,
+    excluded_handlers=["/metrics"],
+).instrument(app)
+
+# ── Gauge de quota utilizada por assinatura (STORY-GOLIVE-03 / REGRA 8) ──
+QUOTA_GAUGE = Gauge(
+    "autosinapi_quota_usage_ratio",
+    "Uso percentual da cota mensal por assinatura ativa",
+    ["client", "plan"],
+)
+
+
+def _init_sentry():
+    if settings.SENTRY_DSN:
+        sentry_sdk.init(
+            dsn=settings.SENTRY_DSN,
+            environment=settings.SENTRY_ENV,
+            traces_sample_rate=0.1,
+        )
+        logger.info("Sentry initialized (env=%s)", settings.SENTRY_ENV)
+
+
+def _update_quota_gauges(stop_event: threading.Event):
+    from sqlalchemy import text as sa_text
+    from .database import SessionLocal
+
+    while not stop_event.is_set():
+        try:
+            db = SessionLocal()
+            rows = db.execute(
+                sa_text(
+                    """
+                    SELECT
+                        c.name AS client_name,
+                        p.slug AS plan_slug,
+                        COALESCE(
+                            SUM(CASE WHEN ul.requested_at >= s.current_period_start
+                                THEN 1 ELSE 0 END), 0
+                        ) AS total_usage,
+                        p.max_requests * 60 * 24 * p.duration_days AS monthly_quota
+                    FROM saas.subscriptions s
+                    JOIN saas.clients c ON s.client_id = c.id
+                    JOIN saas.plans p ON s.plan_id = p.id
+                    LEFT JOIN saas.api_keys ak ON s.id = ak.subscription_id
+                    LEFT JOIN saas.usage_logs ul ON ak.id = ul.api_key_id
+                    WHERE s.status = 'active'
+                    GROUP BY c.name, p.slug, p.max_requests, p.duration_days
+                    """
+                )
+            ).fetchall()
+
+            # Reset gauge before re-populating to avoid stale labels
+            QUOTA_GAUGE.clear()
+            for row in rows:
+                pct = (row.total_usage / row.monthly_quota * 100) if row.monthly_quota > 0 else 0.0
+                QUOTA_GAUGE.labels(client=row.client_name, plan=row.plan_slug).set(pct)
+        except Exception:
+            logger.warning("Quota gauge update failed (DB likely unavailable)", exc_info=True)
+        finally:
+            db.close()
+        stop_event.wait(60)
+
+
+# ── Startup event (Sentry, metrics, background gauge) ──
+@app.on_event("startup")
+async def _on_startup():
+    instrumentator.expose(app)
+    _init_sentry()
+    stop_ev = threading.Event()
+    thr = threading.Thread(target=_update_quota_gauges, args=(stop_ev,), daemon=True)
+    thr.start()
+    logger.info("Gauge updater thread started")
+
+
+# ── Admin auth dependency (STORY-GOLIVE-03) ──
+def verify_admin_token(authorization: str = Header(None)):
+    """FastAPI dependency: verify Bearer ADMIN_API_TOKEN."""
+    if not settings.ADMIN_API_TOKEN:
+        raise HTTPException(status_code=500, detail="ADMIN_API_TOKEN not configured")
+    token_prefix = "Bearer "
+    if not authorization or not authorization.startswith(token_prefix):
+        raise HTTPException(
+            status_code=401, detail="Missing or invalid Authorization header"
+        )
+    token = authorization[len(token_prefix):]
+    if token != settings.ADMIN_API_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+
+
 # Request logging middleware
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -227,48 +324,19 @@ def get_filters(
 @app.post("/api/v1/admin/populate-database", status_code=202, tags=["tier_1", "Admin"], summary="Disparar população da base de dados", response_description="Tarefa de ETL enfileirada para processamento assíncrono.", responses=_POPULATE_RESPONSES)
 def trigger_database_population(
     payload: schemas.PopulateDatabaseRequest,
+    _auth=Depends(verify_admin_token),
 ):
-    """
-    Dispara a tarefa de download e população da base SINAPI para um mês/ano/UF.
-    A tarefa roda em segundo plano. Implementa trava (lock) para evitar duplicações.
-    """
-    sandbox = is_sandbox_mode()
-    lock_key = f"lock:autosinapi:populate:{payload.year}:{payload.month:02d}:{payload.state.upper()}:{'sandbox' if sandbox else 'prod'}"
-
-    if not redis_client.set(lock_key, "active", nx=True, ex=3600):
+    """Dispara ETL para um mês/ano/UF. Lock via Redis (idempotente)."""
+    result = populate_utils.dispatch_populate(payload.year, payload.month, payload.state)
+    if result is None:
         raise HTTPException(
             status_code=409,
             detail=f"Já existe uma tarefa em andamento para {payload.state.upper()} {payload.month:02d}/{payload.year}."
         )
-
-    db_config = {
-        "host": os.getenv("POSTGRES_NAME", "autosinapi_db"),
-        "port": 5432,
-        "database": os.getenv("POSTGRES_DB", "sinapi"),
-        "user": os.getenv("POSTGRES_USER", "admin"),
-        "password": os.getenv("POSTGRES_PASSWORD", "admin"),
-    }
-    sinapi_config = { 
-        "year": payload.year, 
-        "month": payload.month, 
-        "state": payload.state.upper(),
-        "type": "REFERENCIA"
-    }
-
-    try:
-        task = populate_sinapi_task.delay(db_config, sinapi_config)
-        redis_client.set(f"task:{lock_key}", task.id, ex=86400)
-        return {
-            "message": "Tarefa de população da base de dados iniciada com sucesso.",
-            "task_id": task.id,
-            "sandbox": sandbox
-        }
-    except Exception as e:
-        redis_client.delete(lock_key)
-        raise HTTPException(status_code=500, detail=f"Falha ao enfileirar tarefa: {str(e)}")
+    return result
 
 @app.get("/api/v1/admin/tasks/{task_id}", tags=["tier_1", "Admin"], summary="Verificar status de tarefa Celery", response_description="Status e resultado da tarefa Celery.", responses=_AUTH_RESPONSES)
-def get_task_status(task_id: str):
+def get_task_status(task_id: str, _auth=Depends(verify_admin_token)):
     """Verifica o status e resultado de uma tarefa Celery."""
     result = AsyncResult(task_id, app=populate_sinapi_task.app)
     return {

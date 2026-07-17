@@ -60,6 +60,17 @@ class Settings(BaseSettings):
     # Centraliza valores padrão usados nas queries.
     DEFAULT_ITEM_STATUS: str = "ATIVO"
 
+    # --- Observabilidade ---
+    SENTRY_DSN: str | None = None
+    SENTRY_ENV: str = "production"
+
+    # --- Segurança Administrativa ---
+    ADMIN_API_TOKEN: str | None = None
+
+    # --- ETL Automatizado (STORY-GOLIVE-03) ---
+    ETL_LOOKBACK_MONTHS: int = 1
+    ETL_STATES: str = "SP"
+
     # --- Configurações de Segurança ---
     ALLOWED_ORIGINS: str = "*"  # Lista separada por vírgula. Ex: "https://demo.lamp.local,http://localhost:8080"
 

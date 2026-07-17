@@ -17,9 +17,12 @@ da API principal, garantindo que a API permaneça rápida e responsiva.
 """
 
 import os
+import logging
 import redis
 from celery import Celery
 import autosinapi
+
+logger = logging.getLogger("autosinapi.tasks")
 
 # Instancia o app Celery
 celery_app = Celery('tasks')
@@ -66,3 +69,38 @@ def populate_sinapi_task(self, db_config: dict, sinapi_config: dict):
         if not self.request.called_directly:
             redis_client.delete(lock_key)
             print(f"[{self.request.id}] Lock {lock_key} liberado.")
+
+
+@celery_app.task(acks_late=True, max_retries=1, default_retry_delay=3600)
+def schedule_monthly_etl():
+    """Periodic task (Celery beat): compute & dispatch ETL for each ETL_STATES."""
+    from .config import settings
+    from .populate_utils import compute_target_month, parse_etl_states, dispatch_populate
+
+    try:
+        year, month = compute_target_month(settings.ETL_LOOKBACK_MONTHS)
+        states = parse_etl_states(settings.ETL_STATES)
+
+        if not states:
+            logger.warning("ETL_STATES is empty; no ETL dispatched")
+            return {"dispatched": 0, "reason": "no states configured"}
+
+        dispatched = 0
+        for state in states:
+            result = dispatch_populate(year, month, state)
+            if result is not None:
+                dispatched += 1
+                logger.info("ETL dispatched: %s %02d/%d task=%s", state, month, year, result["task_id"])
+            else:
+                logger.info("ETL skipped (lock held): %s %02d/%d", state, month, year)
+
+        logger.info("schedule_monthly_etl done: %d/%d dispatched", dispatched, len(states))
+        return {"dispatched": dispatched, "total": len(states)}
+    except Exception as exc:
+        logger.error("schedule_monthly_etl failed: %s", exc, exc_info=True)
+        try:
+            import sentry_sdk
+            sentry_sdk.capture_exception(exc)
+        except ImportError:
+            pass
+        raise

@@ -14,12 +14,23 @@ que gerencia as tarefas em segundo plano.
 """
 
 import os
+from celery.schedules import crontab
 
 # Configurações para o Celery
 # Utiliza REDIS_HOST do ambiente ou fallback para o nome único da stack
 redis_host = os.getenv("REDIS_HOST", "autosinapi_redis")
 broker_url = f'redis://{redis_host}:6379/0'
 result_backend = f'redis://{redis_host}:6379/0'
+
+# --- Agendamento de Tarefas Periódicas (STORY-GOLIVE-03 / REGRA 7) ---
+# Executa no dia 2 de cada mês às 03:00 UTC, para dar tempo de a SINAPI
+# publicar a competência do mês anterior.
+beat_schedule = {
+    "monthly-etl": {
+        "task": "api.tasks.schedule_monthly_etl",
+        "schedule": crontab(day_of_month=2, hour=3, minute=0),
+    },
+}
 
 # --- Limites de Concorrência e Sobrecarga ---
 # Máximo 1 tarefa por worker (ETL do SINAPI é pesada e consome muita RAM)
