@@ -25,6 +25,15 @@ _AUTH_RESPONSES = {
 _RATE_LIMIT_RESPONSE = {
     429: {"description": "Limite de requisições excedido (demonstração: 15 req/min, 300 req/hour)."},
 }
+# Erros levantados pelo próprio FastAPI (HTTPException) — SSOT reutilizada nos
+# endpoints que de fato os produzem (coesão/DRY, STORY-API-006).
+_NOT_FOUND_404 = {"description": "Recurso não encontrado para os filtros informados."}
+_BAD_REQUEST_400 = {"description": "Parâmetro inválido (tipo_item ou data_fim)."}
+_CONFLICT_409 = {"description": "Já existe tarefa em andamento para o período/UF (lock)."}
+_SERVER_ERROR_500 = {"description": "Erro interno ao enfileirar a tarefa de ETL."}
+_SERVICE_UNAVAILABLE_503 = {
+    "description": "Serviço degradado: banco de dados ou Redis indisponível.",
+}
 
 # --- Traceability Mixin ---
 class TraceabilityMixin(BaseModel):

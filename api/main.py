@@ -89,7 +89,23 @@ _AUTH_DOCS = _AUTH_SECTION + _ERROR_SECTION + _TIER_SECTION
 # Respostas de erro retornadas pelo gateway Kong + plugin ssl-mp-adapter.
 # SSOT do contrato de erro reutilizada por todos os endpoints (coesão/DRY).
 # Definidas em schemas.py para evitar import circular com portal.py.
-from .schemas import _AUTH_RESPONSES, _RATE_LIMIT_RESPONSE
+from .schemas import (
+    _AUTH_RESPONSES,
+    _RATE_LIMIT_RESPONSE,
+    _NOT_FOUND_404,
+    _BAD_REQUEST_400,
+    _CONFLICT_409,
+    _SERVER_ERROR_500,
+    _SERVICE_UNAVAILABLE_503,
+)
+
+# Composições de `responses` reutilizando a SSOT de contrato de erro em
+# schemas.py (coesão/DRY, STORY-API-006). Aplicadas apenas nos endpoints que de
+# fato levantam cada código no código FastAPI.
+_PUBLIC_NOT_FOUND = {**_RATE_LIMIT_RESPONSE, "404": _NOT_FOUND_404}
+_PUBLIC_VALIDATED = {**_RATE_LIMIT_RESPONSE, "404": _NOT_FOUND_404, "400": _BAD_REQUEST_400}
+_POPULATE_RESPONSES = {**_AUTH_RESPONSES, "409": _CONFLICT_409, "500": _SERVER_ERROR_500}
+_HEALTH_RESPONSES = {**_RATE_LIMIT_RESPONSE, "503": _SERVICE_UNAVAILABLE_503}
 
 app = FastAPI(
     title="AutoSINAPI API",
@@ -156,7 +172,7 @@ async def log_requests(request: Request, call_next):
     logger.info(f"{request.method} {request.url.path} {response.status_code}", extra=extra)
     return response
 
-@app.get("/api/v1/public/health", tags=["tier_1", "Health"], summary="Verificar health check da API", response_description="Status do serviço, banco e Redis.", responses=_RATE_LIMIT_RESPONSE)
+@app.get("/api/v1/public/health", tags=["tier_1", "Health"], summary="Verificar health check da API", response_description="Status do serviço, banco e Redis.", responses=_HEALTH_RESPONSES)
 def health_check(db: Session = Depends(get_db)):
     """
     Health check endpoint. Retorna status do banco, Redis e versão da API.
@@ -208,7 +224,7 @@ def get_filters(
 
 # --- Endpoints de Administração ---
 
-@app.post("/api/v1/admin/populate-database", status_code=202, tags=["tier_1", "Admin"], summary="Disparar população da base de dados", response_description="Tarefa de ETL enfileirada para processamento assíncrono.", responses=_AUTH_RESPONSES)
+@app.post("/api/v1/admin/populate-database", status_code=202, tags=["tier_1", "Admin"], summary="Disparar população da base de dados", response_description="Tarefa de ETL enfileirada para processamento assíncrono.", responses=_POPULATE_RESPONSES)
 def trigger_database_population(
     payload: schemas.PopulateDatabaseRequest,
 ):
@@ -271,7 +287,7 @@ def read_root():
 
 # --- Endpoints de Insumos ---
 
-@app.get("/api/v1/public/insumos/{codigo}", response_model=schemas.Insumo, tags=["tier_1", "Insumos"], summary="Consultar insumo por código e contexto", response_description="Insumo e seu preço no contexto (UF, data, regime).", responses=_RATE_LIMIT_RESPONSE)
+@app.get("/api/v1/public/insumos/{codigo}", response_model=schemas.Insumo, tags=["tier_1", "Insumos"], summary="Consultar insumo por código e contexto", response_description="Insumo e seu preço no contexto (UF, data, regime).", responses=_PUBLIC_NOT_FOUND)
 def read_insumo_by_codigo(
     codigo: int,
     uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
@@ -306,7 +322,7 @@ def search_insumos(
 
 # --- Endpoints de Composições ---
 
-@app.get("/api/v1/public/composicoes/{codigo}", response_model=schemas.Composicao, tags=["tier_1", "Composições"], summary="Consultar composição por código e contexto", response_description="Composição e seu custo no contexto informado.", responses=_RATE_LIMIT_RESPONSE)
+@app.get("/api/v1/public/composicoes/{codigo}", response_model=schemas.Composicao, tags=["tier_1", "Composições"], summary="Consultar composição por código e contexto", response_description="Composição e seu custo no contexto informado.", responses=_PUBLIC_NOT_FOUND)
 def read_composicao_by_codigo(
     codigo: int,
     uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
@@ -341,7 +357,7 @@ def search_composicoes(
 
 # --- Endpoints de Business Intelligence (BI) ---
 
-@app.get("/api/v1/public/bi/composicao/{codigo}/bom", response_model=List[schemas.ComposicaoBOMItem], tags=["tier_2", "Business Intelligence"], summary="Obter Bill of Materials da composição", response_description="Árvore completa de Bill of Materials (BOM) com impacto de custo.", responses=_RATE_LIMIT_RESPONSE)
+@app.get("/api/v1/public/bi/composicao/{codigo}/bom", response_model=List[schemas.ComposicaoBOMItem], tags=["tier_2", "Business Intelligence"], summary="Obter Bill of Materials da composição", response_description="Árvore completa de Bill of Materials (BOM) com impacto de custo.", responses=_PUBLIC_NOT_FOUND)
 def get_composition_bom(
     codigo: int,
     uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
@@ -373,7 +389,7 @@ def get_composition_man_hours(codigo: int, db: Session = Depends(get_db)):
             total_hh = getattr(result, 'total_hora_homem', None) or 0.0
     return schemas.ComposicaoManHours(total_hora_homem=total_hh)
 
-@app.post("/api/v1/public/bi/curva-abc", response_model=List[schemas.CurvaABCItem], tags=["tier_2", "Business Intelligence"], summary="Calcular curva ABC de insumos", response_description="Curva ABC de insumos das composições informadas.", responses=_RATE_LIMIT_RESPONSE)
+@app.post("/api/v1/public/bi/curva-abc", response_model=List[schemas.CurvaABCItem], tags=["tier_2", "Business Intelligence"], summary="Calcular curva ABC de insumos", response_description="Curva ABC de insumos das composições informadas.", responses=_PUBLIC_NOT_FOUND)
 def get_abc_curve(
     payload: schemas.CurvaABCRequest,
     uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
@@ -390,7 +406,7 @@ def get_abc_curve(
         raise HTTPException(status_code=404, detail="Nenhum insumo encontrado para as composições e filtros especificados.")
     return abc_curve
 
-@app.get("/api/v1/public/bi/composicao/{codigo}/otimizar", response_model=List[schemas.ComposicaoBOMItem], tags=["tier_2", "Business Intelligence"], summary="Obter candidatos para otimização", response_description="Top-N insumos de maior impacto financeiro (foco de otimização).", responses=_RATE_LIMIT_RESPONSE)
+@app.get("/api/v1/public/bi/composicao/{codigo}/otimizar", response_model=List[schemas.ComposicaoBOMItem], tags=["tier_2", "Business Intelligence"], summary="Obter candidatos para otimização", response_description="Top-N insumos de maior impacto financeiro (foco de otimização).", responses=_PUBLIC_NOT_FOUND)
 def get_optimization_candidates(
     codigo: int,
     uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
@@ -407,7 +423,7 @@ def get_optimization_candidates(
         raise HTTPException(status_code=404, detail="Não foi possível calcular os candidatos para otimização.")
     return candidates
 
-@app.get("/api/v1/public/bi/item/{tipo_item}/{codigo}/historico", response_model=List[schemas.HistoricoCusto], tags=["tier_2", "Business Intelligence"], summary="Obter histórico de custo do item", response_description="Série histórica de custo/preço do item por mês.", responses=_RATE_LIMIT_RESPONSE)
+@app.get("/api/v1/public/bi/item/{tipo_item}/{codigo}/historico", response_model=List[schemas.HistoricoCusto], tags=["tier_2", "Business Intelligence"], summary="Obter histórico de custo do item", response_description="Série histórica de custo/preço do item por mês.", responses=_PUBLIC_VALIDATED)
 def get_item_cost_history(
     tipo_item: str = Path(..., description="Tipo do item: 'insumo' ou 'composicao'"),
     codigo: int = Path(..., description="Código do item."),
@@ -439,7 +455,7 @@ def get_item_cost_history(
         raise HTTPException(status_code=404, detail="Não foram encontrados dados históricos para o item e filtros especificados.")
     return history
 
-@app.get("/api/v1/public/bi/item/{tipo_item}/{codigo}/manutencoes", response_model=List[schemas.HistoricoManutencao], tags=["tier_2", "Business Intelligence"], summary="Obter histórico de manutenções do item", response_description="Histórico de manutenções (ativações/desativações) do item.", responses=_RATE_LIMIT_RESPONSE)
+@app.get("/api/v1/public/bi/item/{tipo_item}/{codigo}/manutencoes", response_model=List[schemas.HistoricoManutencao], tags=["tier_2", "Business Intelligence"], summary="Obter histórico de manutenções do item", response_description="Histórico de manutenções (ativações/desativações) do item.", responses=_PUBLIC_VALIDATED)
 def get_item_maintenance_history(
     tipo_item: str = Path(..., description="Tipo do item: 'insumo' ou 'composicao'"),
     codigo: int = Path(..., description="Código do item."),
@@ -456,7 +472,7 @@ def get_item_maintenance_history(
     return manutencoes
 
 
-@app.get("/api/v1/public/bi/audit/{tipo_item}/{codigo}", response_model=List[schemas.AuditEvent], tags=["tier_2", "Business Intelligence"], summary="Obter trilha de auditoria do item", response_description="Trilha de auditoria completa do item (retificações, status, estrutura).", responses=_RATE_LIMIT_RESPONSE)
+@app.get("/api/v1/public/bi/audit/{tipo_item}/{codigo}", response_model=List[schemas.AuditEvent], tags=["tier_2", "Business Intelligence"], summary="Obter trilha de auditoria do item", response_description="Trilha de auditoria completa do item (retificações, status, estrutura).", responses=_PUBLIC_VALIDATED)
 def get_audit_trail(
     tipo_item: str = Path(..., description="Tipo do item: 'insumo' ou 'composicao'"),
     codigo: int = Path(..., description="Código do item."),
@@ -474,7 +490,7 @@ def get_audit_trail(
         raise HTTPException(status_code=404, detail="Nenhum evento de auditoria encontrado para este item.")
     return audit_events
 
-@app.post("/api/v1/public/bi/curva-abc/por-classificacao", response_model=List[schemas.AbcPorClassificacao], tags=["tier_2", "Business Intelligence"], summary="Calcular curva ABC por classificação", response_description="Curva ABC agregada por classificação de insumo.", responses=_RATE_LIMIT_RESPONSE)
+@app.post("/api/v1/public/bi/curva-abc/por-classificacao", response_model=List[schemas.AbcPorClassificacao], tags=["tier_2", "Business Intelligence"], summary="Calcular curva ABC por classificação", response_description="Curva ABC agregada por classificação de insumo.", responses=_PUBLIC_NOT_FOUND)
 def get_abc_by_classificacao(
     payload: schemas.CurvaABCRequest,
     uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
@@ -492,7 +508,7 @@ def get_abc_by_classificacao(
         raise HTTPException(status_code=404, detail="Nenhuma classificação encontrada para as composições e filtros especificados.")
     return result
 
-@app.get("/api/v1/public/bi/tendencias/por-classificacao", response_model=List[schemas.TendenciaClassificacao], tags=["tier_2", "Business Intelligence"], summary="Obter tendências por classificação", response_description="Evolução mensal de preço/custo agrupada por classificação/grupo/item.", responses=_RATE_LIMIT_RESPONSE)
+@app.get("/api/v1/public/bi/tendencias/por-classificacao", response_model=List[schemas.TendenciaClassificacao], tags=["tier_2", "Business Intelligence"], summary="Obter tendências por classificação", response_description="Evolução mensal de preço/custo agrupada por classificação/grupo/item.", responses=_PUBLIC_VALIDATED)
 def get_tendencias_classificacao(
     uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
     data_referencia: str = Query(..., description="Data de referência final no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
@@ -518,7 +534,7 @@ def get_tendencias_classificacao(
         raise HTTPException(status_code=404, detail="Nenhum dado de tendência encontrado para os filtros especificados.")
     return result
 
-@app.get("/api/v1/public/bi/item/{tipo_item}/{codigo}/precos-uf", response_model=List[schemas.PrecoPorUF], tags=["tier_2", "Business Intelligence"], summary="Obter preços do item em todas UFs", response_description="Preço do item em todas as UFs (mapa de calor regional).", responses=_RATE_LIMIT_RESPONSE)
+@app.get("/api/v1/public/bi/item/{tipo_item}/{codigo}/precos-uf", response_model=List[schemas.PrecoPorUF], tags=["tier_2", "Business Intelligence"], summary="Obter preços do item em todas UFs", response_description="Preço do item em todas as UFs (mapa de calor regional).", responses=_PUBLIC_VALIDATED)
 def get_item_prices_all_ufs(
     tipo_item: str = Path(..., description="Tipo do item: 'insumo' ou 'composicao'"),
     codigo: int = Path(..., description="Código do item."),
@@ -537,7 +553,7 @@ def get_item_prices_all_ufs(
         raise HTTPException(status_code=404, detail="Nenhum dado encontrado para o item e filtros especificados.")
     return precos
 
-@app.get("/api/v1/public/bi/composicao/{codigo}/produtividade", response_model=schemas.ComposicaoProdutividade, tags=["tier_2", "Business Intelligence"], summary="Obter análise de produtividade", response_description="Análise de produtividade (Mão de Obra / Material / Equipamento).", responses=_RATE_LIMIT_RESPONSE)
+@app.get("/api/v1/public/bi/composicao/{codigo}/produtividade", response_model=schemas.ComposicaoProdutividade, tags=["tier_2", "Business Intelligence"], summary="Obter análise de produtividade", response_description="Análise de produtividade (Mão de Obra / Material / Equipamento).", responses=_PUBLIC_NOT_FOUND)
 def get_composition_productivity(
     codigo: int,
     uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
@@ -554,7 +570,7 @@ def get_composition_productivity(
         raise HTTPException(status_code=404, detail="Não foi possível calcular a produtividade para esta composição.")
     return result
 
-@app.get("/api/v1/public/bi/insumo/{codigo}/onde-usado", response_model=List[schemas.InsumoOndeUsado], tags=["tier_2", "Business Intelligence"], summary="Obter composições que usam o insumo", response_description="Query reversa: composições que utilizam o item (em qualquer nível).", responses=_RATE_LIMIT_RESPONSE)
+@app.get("/api/v1/public/bi/insumo/{codigo}/onde-usado", response_model=List[schemas.InsumoOndeUsado], tags=["tier_2", "Business Intelligence"], summary="Obter composições que usam o insumo", response_description="Query reversa: composições que utilizam o item (em qualquer nível).", responses=_PUBLIC_VALIDATED)
 def get_insumo_where_used(
     codigo: int,
     tipo_item: str = Query("insumo", description="Tipo do item: 'insumo' ou 'composicao'"),
