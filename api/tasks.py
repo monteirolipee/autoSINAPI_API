@@ -18,7 +18,6 @@ da API principal, garantindo que a API permaneça rápida e responsiva.
 
 import os
 import logging
-import redis
 from celery import Celery
 import autosinapi
 
@@ -28,47 +27,45 @@ logger = logging.getLogger("autosinapi.tasks")
 celery_app = Celery('tasks')
 celery_app.config_from_object('api.celery_config')
 
-# Cliente Redis para gerenciar o lock
-redis_client = redis.Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379, db=0)
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=300)
-def populate_sinapi_task(self, db_config: dict, sinapi_config: dict):
-    """
-    A tarefa que o Celery Worker irá executar para popular a base de dados.
-    Implementa limpeza de lock ao final e política de retentativa.
+def run_populate_task(db_config: dict, sinapi_config: dict, lock_token: str = None) -> dict:
+    """Executa o ETL e libera o lock de posse ao final.
+
+    Extraído do wrapper Celery para ser testável de forma isolada. A liberação
+    do lock só ocorre se este processo for o dono (token confere), evitando
+    corrida entre retentativas/workers distintos.
     """
     year = sinapi_config.get('year')
     month = sinapi_config.get('month')
     state = sinapi_config.get('state', 'SP')
     mode_suffix = 'sandbox' if os.getenv("AUTOSINAPI_SANDBOX") == "true" else 'prod'
-    lock_key = f"lock:autosinapi:populate:{year}:{month:02d}:{state.upper()}:{mode_suffix}"
-
     try:
-        print(f"[{self.request.id}] Iniciando ETL para {state} {month}/{year} (Modo: {mode_suffix})...")
-        
-        result = autosinapi.run_etl(
+        logger.info("Iniciando ETL para %s %s/%s (Modo: %s)...", state, month, year, mode_suffix)
+        return autosinapi.run_etl(
             db_config=db_config,
             sinapi_config=sinapi_config,
             mode='server'
         )
-        
-        if result.get("status") == "failed":
-            msg = result.get("message", "")
-            print(f"[{self.request.id}] Erro no Toolkit: {msg}")
-            if "Too Many Requests" in msg or "429" in msg:
-                raise self.retry(countdown=600)
-            return result
-
-        print(f"[{self.request.id}] Tarefa de ETL concluída com sucesso.")
-        return result
-    except Exception as e:
-        print(f"[{self.request.id}] Erro fatal ao executar a tarefa: {e}")
-        raise
     finally:
-        # Garante a remoção do lock para permitir novas tentativas
-        if not self.request.called_directly:
-            redis_client.delete(lock_key)
-            print(f"[{self.request.id}] Lock {lock_key} liberado.")
+        # Libera o lock SOMENTE se este worker for o dono (token confere).
+        from .populate_utils import release_populate_lock
+        release_populate_lock(year, month, state, lock_token, sandbox=(mode_suffix == "sandbox"))
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=300)
+def populate_sinapi_task(self, db_config: dict, sinapi_config: dict, lock_token: str = None):
+    """
+    Ponte Celery para run_populate_task. Mantém a política de retentativa
+    (específica do Celery) e delega a execução/liberação de lock.
+    """
+    result = run_populate_task(db_config, sinapi_config, lock_token=lock_token)
+
+    if result.get("status") == "failure":
+        msg = result.get("message", "")
+        if "Too Many Requests" in msg or "429" in msg:
+            raise self.retry(countdown=600)
+
+    return result
 
 
 @celery_app.task(acks_late=True, max_retries=1, default_retry_delay=3600)
