@@ -10,6 +10,7 @@ orquestrando as chamadas para as funções do módulo `crud` e utilizando os
 import os
 import json
 import time
+import secrets
 import logging
 import redis
 from celery.result import AsyncResult
@@ -274,7 +275,7 @@ def verify_admin_token(authorization: str = Header(None)):
             status_code=401, detail="Missing or invalid Authorization header"
         )
     token = authorization[len(token_prefix):]
-    if token != settings.ADMIN_API_TOKEN:
+    if not secrets.compare_digest(token, settings.ADMIN_API_TOKEN or ""):
         raise HTTPException(status_code=401, detail="Invalid admin token")
 
 

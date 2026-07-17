@@ -1,7 +1,8 @@
 # 🧩 Auditoria de Orientação — Camada API (autoSINAPI)
 
 > Documento de orientação da camada **API** (open source, `api/`, FastAPI + Celery + Alembic).
-> Parte do ecossistema AutoSINAPI auditado em `[[docs/audits/autosinapi/2026-07-17_AUDIT-GERAL]]`.
+> Parte do ecossistema AutoSINAPI auditado em `repos/mundoaec/docs/audits/autosinapi/2026-07-17_AUDIT-GERAL.md`
+> (repos independentes; caminho relativo à raiz do SistemaServerLight).
 > Segue o padrão MVC-Hexagonal de `docs/architecture.md`. Contém as seções
 > **Audit · Epic · Spec-Rule · Sprint · Story** para guiar o desenvolvimento.
 
@@ -21,7 +22,7 @@
 
 ### 1.2 Coerência
 - 🔴 **ETL status vocabulary incompatível** (verificado): `api/tasks.py:55` checa
-  `== "failed"`, mas o ETL retorna `"FALHA"` → falhas silenciosas, sem retry (ver `[[AUDIT-ETL]]`).
+  `== "failed"`, mas o ETL retorna `"FALHA"` → falhas silenciosas, sem retry (ver `repos/autosinapi_api/AutoSINAPI/docs/AUDIT-ETL.md`).
 - 🔴 **Colunas `origem_preco`/`percentual_mo` ausentes no alembic** (verificado): lidas em
   `crud.py:62,83,107,128`, escritas pelo ETL, sem migration → 500 em insumo/composição.
 - Schema↔response gap: `HistoricoCusto` (`schemas.py:105-111`) declara campos sempre nulos;
