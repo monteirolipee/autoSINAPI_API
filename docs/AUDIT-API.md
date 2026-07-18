@@ -1,3 +1,17 @@
+---
+id: AUDIT-API-autosinapi
+type: audit
+status: active
+date: 2026-07-17
+owner: platform
+tags: [audit, api, fastapi, security, resilience, autosinapi]
+links:
+  - "repos/mundoaec/docs/audits/autosinapi/2026-07-17_AUDIT-GERAL.md"
+  - "stacks/autosinapi/kong/docs/AUDIT-GATEWAY.md"
+  - "repos/autosinapi_api/AutoSINAPI/docs/AUDIT-ETL.md"
+  - "stacks/autosinapi/docs/planning/SPEC-018-hexagonal-architecture.md"
+---
+
 # 🧩 Auditoria de Orientação — Camada API (autoSINAPI)
 
 > Documento de orientação da camada **API** (open source, `api/`, FastAPI + Celery + Alembic).
@@ -5,6 +19,16 @@
 > (repos independentes; caminho relativo à raiz do SistemaServerLight).
 > Segue o padrão MVC-Hexagonal de `docs/architecture.md`. Contém as seções
 > **Audit · Epic · Spec-Rule · Sprint · Story** para guiar o desenvolvimento.
+
+---
+
+## 0. Status de Remediação (2026-07-17)
+
+- **P1-C (admin token constant-time / SR-API-2):** DONE — `api/main.py` usa
+  `secrets.compare_digest` em `verify_admin_token`; 9 testes (`tests/test_admin_token.py`).
+  Commit `12819d4`.
+- **P1-A (authz defense-in-depth), P1-B (resiliência DB), P1-C-inputs (P1-C do roadmap mãe):**
+  **pendente**.
 
 ---
 
