@@ -10,8 +10,37 @@ Valida:
 """
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from api.main import app
+from api.database import get_db
 from api.schemas import PortalResponse, PlanInfo, QuotaInfo, PortalLinks
+
+
+class _FakeResult:
+    def mappings(self):
+        return self
+
+    def first(self):
+        return None
+
+
+class _FakeDB:
+    """Captura as SQL executadas sem precisar de um Postgres real."""
+
+    def __init__(self):
+        self.statements = []
+
+    def execute(self, stmt, params=None):
+        self.statements.append(str(stmt))
+        return _FakeResult()
+
+
+@pytest.fixture
+def captured_db():
+    db = _FakeDB()
+    app.dependency_overrides[get_db] = lambda: db
+    yield db
+    app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture
@@ -153,3 +182,17 @@ class TestPortalSchema:
         assert data["quota"]["percentage"] == 8.3
         assert data["links"]["downgrade"] is None
         assert len(data["links"]["upgrade"]) == 2
+
+
+class TestPortalKeyHashLookup:
+    """GW-023: lookup de API key deve usar key_hash (crypt), nunca plaintext."""
+
+    def test_lookup_uses_key_hash_not_plaintext(self, captured_db):
+        client = TestClient(app)
+        # 401 esperado (fake DB não retorna linha), mas capturamos a SQL.
+        resp = client.get("/api/v1/public/portal/me", headers={"X-API-KEY": "tok"})
+        assert resp.status_code in (401, 500)
+        assert captured_db.statements, "nenhuma SQL executada"
+        sql = captured_db.statements[0]
+        assert "key_hash = crypt(" in sql, "lookup deve comparar pelo hash bcrypt"
+        assert "key_value = " not in sql, "Não expor comparação por plaintext"

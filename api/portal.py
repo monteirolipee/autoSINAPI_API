@@ -33,9 +33,9 @@ def portal_me(
             FROM saas.api_keys k
             JOIN saas.subscriptions s ON s.id = k.subscription_id
             JOIN saas.plans p ON p.id = s.plan_id
-            WHERE k.key_value = :key_value
+            WHERE k.key_hash = crypt(:x_api_key, k.key_hash)
         """),
-        {"key_value": x_api_key},
+        {"x_api_key": x_api_key},
     ).mappings().first()
 
     if not key_row:
@@ -69,14 +69,20 @@ def portal_me(
 
     plan_slug = key_row["plan_slug"]
     upgrade_links = {}
-    if plan_slug == "starter":
+    if plan_slug == "free":
+        upgrade_links = {
+            "starter": f"{frontend_base}/checkout?plan=starter",
+            "pro": f"{frontend_base}/checkout?plan=pro",
+            "Business": f"{frontend_base}/checkout?plan=Business",
+        }
+    elif plan_slug == "starter":
         upgrade_links = {
             "pro": f"{frontend_base}/checkout?plan=pro",
-            "business": f"{frontend_base}/checkout?plan=business",
+            "Business": f"{frontend_base}/checkout?plan=Business",
         }
     elif plan_slug == "pro":
         upgrade_links = {
-            "business": f"{frontend_base}/checkout?plan=business",
+            "Business": f"{frontend_base}/checkout?plan=Business",
         }
 
     def _fmt_ts(ts):
@@ -102,9 +108,9 @@ def portal_me(
         features=features,
         links=schemas.PortalLinks(
             upgrade=upgrade_links,
-            downgrade=f"{frontend_base}/checkout?plan=starter"
-            if plan_slug != "starter"
-            else None,
+            downgrade=None
+            if plan_slug in ("free", "starter")
+            else f"{frontend_base}/checkout?plan=starter",
             renew=f"{frontend_base}/checkout?plan={plan_slug}",
         ),
     )
