@@ -43,6 +43,7 @@ from .database import get_db
 from .tasks import populate_sinapi_task
 from .cache_utils import redis_client as cache_redis
 from .portal import router as portal_router
+from .legal_service import get_legal_document
 import threading
 
 # Carrega as configurações uma vez
@@ -96,10 +97,35 @@ _TIER_SECTION = (
     "## Tiers de Endpoint (disponibilidade por plano)\n"
     "- `tier_1` (leve): health, stats, filters, insumos, composições — Starter/Pro/Business\n"
     "- `tier_2` (pesado/BI): BOM, curva-abc, tendências, precos-uf — Pro/Business\n"
-    "- `tier_3` (exclusivo): Business\n"
+    "- `tier_3` (exclusivo): Business\n\n"
+)
+_MCP_SECTION = (
+    "## Integração com Agentes de IA (Model Context Protocol)\n\n"
+    "O AutoSINAPI expõe suas tools via MCP (Model Context Protocol). "
+    "Conecte seus agentes de IA (Claude, Cursor, VSCode, OpenCode, Hermes, OpenClaw) "
+    "diretamente ao motor de dados do SINAPI.\n\n"
+    "### Endpoint SSE\n"
+    "`https://mcp.autosinapi.mundoaec.com/sse`\n\n"
+    "### Autenticação\n"
+    "Header `X-API-KEY`. Sem chave → modo demonstração (15 req/min). "
+    "Com chave válida → rate limit do plano.\n\n"
+    "### Tools disponíveis\n"
+    "- **Tier 1** (todas os planos): sinapi_health, sinapi_portal_me, sinapi_stats, sinapi_filters, "
+    "sinapi_search_insumos, sinapi_get_insumo, sinapi_search_composicoes, sinapi_get_composicao\n"
+    "- **Tier 2** (Pro+): sinapi_get_bom, sinapi_get_hora_homem, sinapi_get_curva_abc, "
+    "sinapi_get_curva_abc_classificacao, sinapi_get_tendencias, sinapi_get_precos_uf, "
+    "sinapi_get_produtividade, sinapi_get_onde_usado, sinapi_get_historico, sinapi_get_manutencoes, sinapi_get_audit\n\n"
+    "### Clientes suportados\n"
+    "Consulte o [Developer Portal](https://mundoaec.com/dev/api#mcp-agents) para snippets de configuração "
+    "de cada cliente (Claude Desktop, Cursor, OpenCode, VSCode, OpenAI Codex, Hermes, OpenClaw).\n\n"
+    "### Exemplo de conexão (curl)\n"
+    "```bash\n"
+    "curl -N https://mcp.autosinapi.mundoaec.com/sse \\\n"
+    "  -H \"X-API-KEY: SUA_CHAVE_AQUI\"\n"
+    "```\n"
 )
 # SSOT da documentação de auth/erros/rate-limits exibida no Swagger (consolidada).
-_AUTH_DOCS = _AUTH_SECTION + _ERROR_SECTION + _TIER_SECTION
+_AUTH_DOCS = _AUTH_SECTION + _ERROR_SECTION + _TIER_SECTION + _MCP_SECTION
 
 # Respostas de erro retornadas pelo gateway Kong + plugin ssl-mp-adapter.
 # SSOT do contrato de erro reutilizada por todos os endpoints (coesão/DRY).
@@ -227,7 +253,7 @@ def _update_quota_gauges(stop_event: threading.Event):
                             SUM(CASE WHEN ul.requested_at >= s.current_period_start
                                 THEN 1 ELSE 0 END), 0
                         ) AS total_usage,
-                        p.max_requests * 60 * 24 * p.duration_days AS monthly_quota
+                        CAST(p.max_requests AS BIGINT) * 60 * 24 * p.duration_days AS monthly_quota
                     FROM saas.subscriptions s
                     JOIN saas.clients c ON s.client_id = c.id
                     JOIN saas.plans p ON s.plan_id = p.id
@@ -338,6 +364,17 @@ def get_filters(
     elif tipo == 'composicao':
         result.pop('classificacoes', None)
     return result
+
+@app.get("/api/v1/public/legal/{doc_name}", tags=["tier_1", "Public"], summary="Obter documento legal preenchido (SSOT)", response_description="Documento legal (LGPD, TOS, Reembolso, SINAPI) populado com dados corporativos.", responses=_RATE_LIMIT_RESPONSE)
+def get_legal_doc(doc_name: str):
+    """
+    Retorna o documento legal solicitado (privacidade, tos, reembolso, sinapi)
+    populado dinamicamente com os dados do SSOT (CNPJ, Razão Social, DPO, etc.).
+    """
+    try:
+        return get_legal_document(doc_name)
+    except (ValueError, FileNotFoundError) as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 # --- Endpoints de Administração ---
 
