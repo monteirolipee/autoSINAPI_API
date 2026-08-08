@@ -154,7 +154,7 @@ app = FastAPI(
         "API para consulta de preços, custos, estruturas e análises da base de dados SINAPI.\n\n"
         + _AUTH_DOCS
     ),
-    version="0.3.0-beta.0",
+    version="0.4.0-beta.0",
 )
 
 # Injeta o securityScheme ApiKeyAuth (X-API-KEY) no schema OpenAPI para o
@@ -320,7 +320,7 @@ def health_check(db: Session = Depends(get_db)):
     """
     Health check endpoint. Retorna status do banco, Redis e versão da API.
     """
-    checks = {"status": "healthy",         "version": "0.3.0-beta.0", "timestamp": datetime.utcnow().isoformat() + "Z"}
+    checks = {"status": "healthy",         "version": "0.4.0-beta.0", "timestamp": datetime.utcnow().isoformat() + "Z"}
 
     try:
         db.execute(text("SELECT 1"))
