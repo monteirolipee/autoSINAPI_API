@@ -70,8 +70,8 @@ docker-compose.override.yml
 .idea/
 .vscode/
 
-# Model
-# AutoSINAPI/  <-- Removed: ETL toolkit is part of the project
+# Model - ATENÇÃO O MÓDULO ETL É UM PROJETO EXTERNO! NUNCA VINCULAR !!!
+AutoSINAPI/  
 
 # Logs
 logs/

@@ -12,4 +12,5 @@ python-dateutil
 alembic
 prometheus-fastapi-instrumentator
 sentry-sdk
+PyYAML
 # Instala o toolkit autoSINAPI via Dockerfile (./AutoSINAPI)
