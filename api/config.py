@@ -52,7 +52,9 @@ class Settings(BaseSettings):
         return get_sandbox_table_name("manutencoes_historico")
 
     # --- Configurações de Cache ---
-    REDIS_HOST: str = "redis"
+    # SSOT: nome único da stack (evita colisão do alias genérico "redis"
+    # no server_mesh, que round-robina para server_redis de outra stack).
+    REDIS_HOST: str = "autosinapi_redis"
     REDIS_PORT: int = 6379
     CACHE_DEFAULT_TTL: int = 86400  # 24 horas
 

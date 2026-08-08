@@ -11,7 +11,9 @@ from dateutil.relativedelta import relativedelta
 
 logger = logging.getLogger("autosinapi.populate_utils")
 
-redis_client = redis.Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379, db=0)
+# SSOT: mesmo host do celery_config (autosinapi_redis). O alias genérico
+# "redis" colide no server_mesh (server_redis), quebrando lock/cache.
+redis_client = redis.Redis(host=os.getenv("REDIS_HOST", "autosinapi_redis"), port=6379, db=0)
 
 # Tempo de posse do lock: 90 min (uma execução de ETL completa não deve
 # ultrapassar isso; sobra margem contra travamentos por crash).
@@ -78,6 +80,24 @@ def parse_etl_states(states_csv: str) -> list:
     return [s.strip().upper() for s in states_csv.split(",") if s.strip()]
 
 
+def build_db_config() -> dict:
+    """Monta o db_config do worker ETL com credenciais conhecidas (SSOT).
+
+    Ordem de precedência (ADR-033 R1.1): PG_* -> POSTGRES_* -> host padrão
+    `autodinapi-db.lamp.local`. O hostname genérico "db" NUNCA é usado como
+    default: no server_mesh ele colide com o banco de outra stack (redmine_db),
+    quebrando a autenticação do ETL (R1.3). As mesmas variáveis PG_* usadas
+    pelo quota-alerter garantem que quem escreve e quem lê o banco concordam.
+    """
+    return {
+        "host": os.getenv("PG_HOST", "autodinapi-db.lamp.local"),
+        "port": int(os.getenv("PG_PORT", "5432")),
+        "database": os.getenv("PG_DATABASE", os.getenv("POSTGRES_DB", "sinapi")),
+        "user": os.getenv("PG_USER", os.getenv("POSTGRES_USER", "admin")),
+        "password": os.getenv("PG_PASSWORD", os.getenv("POSTGRES_PASSWORD", "admin")),
+    }
+
+
 def dispatch_populate(year: int, month: int, state: str) -> Optional[dict]:
     """Adquire o lock de ETL (com token de posse) e dispara populate_sinapi_task.
 
@@ -95,13 +115,7 @@ def dispatch_populate(year: int, month: int, state: str) -> Optional[dict]:
 
     lock_key = _populate_lock_key(year, month, state, mode_suffix)
 
-    db_config = {
-        "host": os.getenv("POSTGRES_NAME", "db"),
-        "port": 5432,
-        "database": os.getenv("POSTGRES_DB", "sinapi"),
-        "user": os.getenv("POSTGRES_USER", "admin"),
-        "password": os.getenv("POSTGRES_PASSWORD"),
-    }
+    db_config = build_db_config()
     sinapi_config = {
         "year": year,
         "month": month,
