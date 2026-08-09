@@ -16,8 +16,9 @@ ambientes:
 """
 
 import os
+import urllib.request
 from datetime import date
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 # Portal de downloads da Caixa (SSOT com autodinapi/config.py BASE_URL).
 PORTAL_BASE_URL = os.getenv(
@@ -101,3 +102,52 @@ def compute_target_month(today: Optional[date] = None) -> Tuple[int, int]:
     comp = expected_latest_competence(today)
     year, month = comp.split("-")
     return int(year), int(month)
+
+
+def _urlopen(req, timeout=None):
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def probe_url(url: str, timeout: float = 5.0) -> bool:
+    """Confirma se uma URL responde 200 (B2.2).
+
+    Primeiro tenta HEAD; se o servidor bloquear HEAD (WAF/Azion), cai para GET
+    raso. Toda exceção é capturada — o probe NUNCA crasha o chamador
+    (ADR-033 R2.3). 200 → confirmado; 429/302/timeout → False.
+    """
+    for method in ("HEAD", "GET"):
+        try:
+            with _urlopen(urllib.request.Request(url, method=method), timeout=timeout) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+def discover_available_base(
+    today: Optional[date] = None,
+    probe_fn: Optional[Callable[[str], bool]] = None,
+    base_url: str = PORTAL_BASE_URL,
+) -> Tuple[Optional[str], str, List[str]]:
+    """Descobre a base disponível seguindo a ordem de precedência (B2.3).
+
+    1. `calendar` — calendário de publicação (fonte principal, B2.1);
+    2. `portal` — calendário confirmado por probe (200, B2.2).
+
+    Quando o probe está bloqueado (429/302/timeout), a competência do
+    calendário permanece como `available_base` com `source == "calendar"`
+    (B4.3) — não se degrada para `db_max`, pois isso esconderia a chegada de
+    uma base mais nova (status viraria `current` incorretamente).
+
+    Retorna `(competencia, source, sources)`. `sources` registra a cadeia de
+    fontes consultadas para a API reportar origem (B4.3).
+    """
+    today = today or date.today()
+    calendar_comp = expected_latest_competence(today)
+    if probe_fn is None:
+        probe_fn = lambda c: any(probe_url(u, timeout=5.0) for u in build_urls(c, base_url))
+
+    if probe_fn(calendar_comp):
+        return calendar_comp, "portal", ["calendar", "portal"]
+    return calendar_comp, "calendar", ["calendar"]

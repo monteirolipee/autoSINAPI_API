@@ -28,6 +28,8 @@ from api.sinapi_disponibilidade import (  # noqa: E402
     build_urls,
     resolve_status,
     compute_target_month,
+    probe_url,
+    discover_available_base,
 )
 
 
@@ -112,3 +114,76 @@ class TestComputeTargetMonth:
 
     def test_target_uses_injected_today(self):
         assert compute_target_month(date(2027, 1, 5)) == (2026, 11)
+
+
+# ─────────────────────────────────────────────────────────────
+# B2.2 Probe de URL (nunca crasha; 200 → confirmado)
+# ─────────────────────────────────────────────────────────────
+
+class TestProbeUrl:
+    def test_returns_true_on_200(self, monkeypatch):
+        class _Resp:
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc):
+                return False
+        def _open(req, timeout=None):
+            assert req.method == "HEAD"
+            return _Resp()
+        monkeypatch.setattr("api.sinapi_disponibilidade._urlopen", _open)
+        assert probe_url("https://example.invalid/SINAPI-2026-07-formato-xlsx.zip") is True
+
+    def test_falls_back_to_get_when_head_fails(self, monkeypatch):
+        calls = {"n": 0}
+        class _Resp:
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc):
+                return False
+        def _open(req, timeout=None):
+            calls["n"] += 1
+            if req.method == "HEAD":
+                raise OSError("head blocked")
+            return _Resp()
+        monkeypatch.setattr("api.sinapi_disponibilidade._urlopen", _open)
+        assert probe_url("https://example.invalid/x.zip") is True
+        assert calls["n"] == 2  # HEAD + fallback GET
+
+    def test_returns_false_when_all_fail(self, monkeypatch):
+        def _open(req, timeout=None):
+            raise OSError("boom")
+        monkeypatch.setattr("api.sinapi_disponibilidade._urlopen", _open)
+        assert probe_url("https://example.invalid/x.zip") is False
+
+
+# ─────────────────────────────────────────────────────────────
+# B2.3/B4.3 discover_available_base (ordem de precedência)
+# ─────────────────────────────────────────────────────────────
+
+class TestDiscoverAvailableBase:
+    def test_calendar_confirmed_by_probe_wins(self):
+        comp, source, sources = discover_available_base(
+            today=date(2026, 8, 20),
+            probe_fn=lambda c: True,
+        )
+        assert comp == "2026-07"
+        assert source == "portal"
+        assert "portal" in sources
+
+    def test_probe_blocked_keeps_calendar_unconfirmed(self):
+        comp, source, sources = discover_available_base(
+            today=date(2026, 8, 8),
+            probe_fn=lambda c: False,
+        )
+        assert comp == "2026-06"  # calendário mantido (B4.3)
+        assert source == "calendar"
+        assert sources == ["calendar"]
+
+    def test_sources_list_only_calendar_when_blocked(self):
+        comp, source, sources = discover_available_base(
+            today=date(2026, 8, 8),
+            probe_fn=lambda c: False,
+        )
+        assert sources == ["calendar"]

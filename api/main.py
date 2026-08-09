@@ -140,6 +140,14 @@ from .schemas import (
     _SERVICE_UNAVAILABLE_503,
 )
 
+# Monitoramento da base disponível × consumida (ADR-034 / SPEC-RULE B3-B4):
+# funções puras do módulo compartilhado (DRY — também usado pelo kong watcher).
+from .sinapi_disponibilidade import (
+    expected_latest_competence,
+    discover_available_base,
+    resolve_status,
+)
+
 # Composições de `responses` reutilizando a SSOT de contrato de erro em
 # schemas.py (coesão/DRY, STORY-API-006). Aplicadas apenas nos endpoints que de
 # fato levantam cada código no código FastAPI.
@@ -336,8 +344,62 @@ def health_check(db: Session = Depends(get_db)):
         checks["redis"] = f"error: {str(e)}"
         checks["status"] = "degraded"
 
+    # B4.2: expõe a competência máxima consumida (YYYY-MM) para comparabilidade
+    # direta com a base disponível (ADR-034).
+    checks["max_data_referencia"] = _get_max_data_referencia(db)
+
     status_code = 200 if checks["status"] == "healthy" else 503
     return JSONResponse(content=checks, status_code=status_code)
+
+
+def _get_max_data_referencia(db: Session) -> Optional[str]:
+    """Competência máxima consumida (max data_referencia em precos_insumos_mensal).
+
+    Retorna no formato 'YYYY-MM' (ex.: '2026-06') ou None se a base estiver
+    vazia/indisponível. Nunca levanta: health/base não podem quebrar por erro
+    de consulta (resiliência, ADR-034).
+    """
+    try:
+        row = db.execute(text("SELECT max(data_referencia) FROM precos_insumos_mensal")).first()
+        if row is None or row[0] is None:
+            return None
+        max_data = row[0]
+        if hasattr(max_data, "isoformat"):
+            return max_data.isoformat()[:7]
+        return str(max_data)[:7]
+    except Exception:
+        return None
+
+
+@app.get("/api/v1/public/base", tags=["tier_1", "Health"], summary="Verificar base disponível vs consumida", response_description="Compara a competência disponível (calendário/probe) com a consumida (max da base).", responses=_HEALTH_RESPONSES)
+def base_availability(db: Session = Depends(get_db)):
+    """
+    Compara a base disponível × consumida (ADR-034 B4.1).
+
+    - `available_base`: competência disponível (calendário de publicação,
+      confirmada por probe quando possível — B2.2/B4.3);
+    - `consumed_base`: `max(data_referencia)` da tabela de preços (YYYY-MM);
+    - `status`: `current` | `new-base-available` | `suspicious` | `unknown`;
+    - `sources`: cadeia de fontes consultadas (calendar, portal, ...);
+    - `as_of`: timestamp da resposta.
+    """
+    consumed_base = _get_max_data_referencia(db)
+    # O endpoint é síncrono e público: usar o calendário como fonte (B2.1) sem
+    # probe de rede por requisição (latência + risco de 429; o probe é feito
+    # pelo kong watcher com cache TTL — DRY, ADR-034 R2.4).
+    available_base, source, sources = discover_available_base(
+        probe_fn=lambda c: False
+    )
+    status = resolve_status(available_base, consumed_base)
+
+    return JSONResponse(content={
+        "available_base": available_base,
+        "consumed_base": consumed_base,
+        "status": status,
+        "source": source,
+        "sources": sources,
+        "as_of": datetime.utcnow().isoformat() + "Z",
+    })
 
 # Conexão direta com Redis para lock de tarefas (idempotência)
 redis_client = redis.Redis(host=os.getenv("REDIS_HOST", "autosinapi_redis"), port=6379, db=0)
