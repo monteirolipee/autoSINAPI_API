@@ -143,11 +143,18 @@ class TestPostSchemasOpenAPI:
 class TestPostSchemasFunctional:
     """Smoke funcional: garante que os modelos Pydantic estão ativos e validando."""
 
+    @pytest.fixture(autouse=True)
+    def _admin_token(self, monkeypatch):
+        # Endpoint admin exige ADMIN_API_TOKEN + header desde ADR/STORY-GOLIVE-03
+        monkeypatch.setattr("api.main.settings.ADMIN_API_TOKEN", "test-admin-token")
+        self.admin_headers = {"Authorization": "Bearer test-admin-token"}
+
     def test_populate_database_rejects_invalid_state(self):
         client = TestClient(app)
         # state "S" viola min_length=2 -> 422 de validação Pydantic
         resp = client.post(
             "/api/v1/admin/populate-database",
+            headers=self.admin_headers,
             json={"year": 2025, "month": 9, "state": "S"},
         )
         assert resp.status_code == 422
@@ -156,6 +163,7 @@ class TestPostSchemasFunctional:
         client = TestClient(app)
         resp = client.post(
             "/api/v1/admin/populate-database",
+            headers=self.admin_headers,
             json={"year": 2025, "month": 9, "state": "SP"},
         )
         # Validação OK => não deve ser 422 (Redis/ETL pode dar 202 ou 409)
