@@ -39,6 +39,7 @@ from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 
 from . import crud, schemas, config, populate_utils
+from . import search as search_pipeline
 from .database import get_db
 from .tasks import populate_sinapi_task
 from .cache_utils import redis_client as cache_redis
@@ -490,21 +491,35 @@ def read_insumo_by_codigo(
         raise HTTPException(status_code=404, detail="Insumo não encontrado para os filtros especificados.")
     return db_insumo
 
-@app.get("/api/v1/public/insumos", response_model=List[schemas.Insumo], tags=["tier_1", "Insumos"], summary="Buscar insumos por descrição", response_description="Lista paginada de insumos que casam com a busca.", responses=_RATE_LIMIT_RESPONSE)
+def _search_response(result: dict, meta: bool) -> JSONResponse:
+    """Empacota o resultado de busca.
+
+    SPEC-RULE-SEARCH: sem `meta` → lista simples (retrocompatível) + header
+    `X-Total-Count`; com `meta=true` → envelope `{items, total}`.
+    """
+    items, total = result.get("items", []), result.get("total", 0)
+    payload = result if meta else items
+    resp = JSONResponse(content=payload)
+    resp.headers["X-Total-Count"] = str(total)
+    return resp
+
+@app.get("/api/v1/public/insumos", response_model=schemas.InsumoSearchResult, tags=["tier_1", "Insumos"], summary="Buscar insumos por descrição ou código", response_description="Lista paginada de insumos. `?meta=true` retorna envelope `{items, total}`; sem meta retorna lista simples e `X-Total-Count` no header.", responses=_RATE_LIMIT_RESPONSE)
 def search_insumos(
-    q: str = Query(..., min_length=3, description="Termo para buscar na descrição do insumo."),
+    q: str = Query(..., min_length=3, description="Termo para buscar na descrição do insumo, ou código numérico exato."),
     uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
     data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
     regime: str = Query("NAO_DESONERADO", description="Regime de preço.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
     classificacao: str = Query(None, description="Filtrar por classificação do insumo. Ex: AGREGADOS, ACO, CONCRETO"),
+    meta: bool = Query(False, description="true → envelope `{items, total}`; false → lista simples."),
     skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 ):
     """
-    Busca insumos pela descrição e retorna seus preços para um determinado contexto.
-    Opcionalmente filtra por classificação.
+    Busca insumos pela descrição (ranking trigram) ou código exato e retorna
+    seus preços para um determinado contexto. Opcionalmente filtra por
+    classificação.
     """
-    insumos = crud.search_insumos_by_descricao(db, q=q, uf=uf, data_referencia=data_referencia, regime=regime, skip=skip, limit=limit, classificacao=classificacao)
-    return insumos
+    result = crud.search_insumos_by_descricao(db, q=q, uf=uf, data_referencia=data_referencia, regime=regime, skip=skip, limit=limit, classificacao=classificacao)
+    return _search_response(result, meta)
 
 
 # --- Endpoints de Composições ---
@@ -525,21 +540,77 @@ def read_composicao_by_codigo(
         raise HTTPException(status_code=404, detail="Composição não encontrada para os filtros especificados.")
     return db_composicao
 
-@app.get("/api/v1/public/composicoes", response_model=List[schemas.Composicao], tags=["tier_1", "Composições"], summary="Buscar composições por descrição", response_description="Lista paginada de composições que casam com a busca.", responses=_RATE_LIMIT_RESPONSE)
+@app.get("/api/v1/public/composicoes", response_model=schemas.ComposicaoSearchResult, tags=["tier_1", "Composições"], summary="Buscar composições por descrição ou código", response_description="Lista paginada de composições. `?meta=true` retorna envelope `{items, total}`; sem meta retorna lista simples e `X-Total-Count` no header.", responses=_RATE_LIMIT_RESPONSE)
 def search_composicoes(
-    q: str = Query(..., min_length=3, description="Termo para buscar na descrição da composição."),
+    q: str = Query(..., min_length=3, description="Termo para buscar na descrição da composição, ou código numérico exato."),
     uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
     data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
     regime: str = Query("NAO_DESONERADO", description="Regime de custo.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
     grupo: str = Query(None, description="Filtrar por grupo da composição. Ex: SERVICOS, ESTRUTURA, INSTALACOES"),
+    meta: bool = Query(False, description="true → envelope `{items, total}`; false → lista simples."),
     skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 ):
     """
-    Busca composições pela descrição e retorna seus custos para um determinado contexto.
-    Opcionalmente filtra por grupo.
+    Busca composições pela descrição (ranking trigram) ou código exato e retorna
+    seus custos para um determinado contexto. Opcionalmente filtra por grupo.
     """
-    composicoes = crud.search_composicoes_by_descricao(db, q=q, uf=uf, data_referencia=data_referencia, regime=regime, skip=skip, limit=limit, grupo=grupo)
-    return composicoes
+    result = crud.search_composicoes_by_descricao(db, q=q, uf=uf, data_referencia=data_referencia, regime=regime, skip=skip, limit=limit, grupo=grupo)
+    return _search_response(result, meta)
+
+
+# --- Endpoints de Busca Unificada (STORY-SRC-002 / "Google do SINAPI") ---
+
+@app.get("/api/v1/public/search", response_model=schemas.UnifiedSearchResult, tags=["tier_1", "Search"], summary="Buscar insumos e composições", response_description="Busca unificada (insumo+composição) com ranking, sort e paginação server-side; `meta.providers`/`meta.degraded` expõem as camadas ativas e degradações.", responses=_RATE_LIMIT_RESPONSE)
+def search_unified(
+    q: str = Query(..., min_length=1, description="Termo para buscar em descrições de insumos e composições, ou código numérico exato."),
+    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
+    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de preço/custo.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
+    tipo: str = Query("all", description="Filtrar tipo: `all`, `insumo` ou `composicao`.", examples={"exemplo": {"value": "all"}}),
+    sort: str = Query("relevance", description="Ordenação: `relevance`, `price_asc`, `price_desc`, `name`.", examples={"exemplo": {"value": "relevance"}}),
+    vector: str = Query("off", description="Camada vetorial: `auto`, `off` ou `<model_slug>`. Nesta fase é degradada (Fase 4).", examples={"exemplo": {"value": "off"}}),
+    grupo: str = Query(None, description="Filtrar composições por grupo. Ex: ESTRUTURA"),
+    classificacao: str = Query(None, description="Filtrar insumos por classificação. Ex: CONCRETO"),
+    skip: int = 0, limit: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)
+):
+    """
+    Busca unificada de insumos e composições (camadas ILIKE/trigrama + relacional).
+    O envelope expõe `meta.providers` (camadas ativas) e `meta.degraded`
+    (camadas solicitadas indisponíveis — ex.: `vector`), além de
+    `meta.did_you_mean` quando não há resultados. Itens de insumo incluem
+    `usado_em` (top 5 composições que o utilizam).
+    """
+    return search_pipeline.unified_search(
+        db, q=q, uf=uf, data_referencia=data_referencia, regime=regime,
+        tipo=tipo, sort=sort, vector=vector, skip=skip, limit=limit,
+        grupo=grupo, classificacao=classificacao,
+    )
+
+@app.get("/api/v1/public/search/suggest", response_model=schemas.SearchSuggestResult, tags=["tier_1", "Search"], summary="Sugerir autocompletar", response_description="Top 8 sugestões cross-type (insumo+composição) por prefixo/trigrama.", responses=_RATE_LIMIT_RESPONSE)
+def search_suggest(
+    q: str = Query(..., min_length=1, description="Prefixo/termo para sugestões de autocomplete."),
+    limit: int = Query(8, ge=1, le=20), db: Session = Depends(get_db)
+):
+    """
+    Autocomplete cross-type: retorna até `limit` sugestões (padrão 8)
+    combinando insumos e composições, ranqueadas por prefixo + trigrama.
+    """
+    return {"items": crud.search_suggest(db, q=q, limit=limit)}
+
+@app.get("/api/v1/public/search/related", response_model=schemas.SearchRelatedResult, tags=["tier_2", "Search"], summary="Listar composições relacionadas", response_description="Top 5 composições relacionadas via Jaccard do Bill of Materials.", responses=_RATE_LIMIT_RESPONSE)
+def search_related(
+    codigo: int = Query(..., description="Código da composição de referência.", examples={"exemplo": {"value": 88247}}),
+    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
+    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de custo.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
+    limit: int = Query(5, ge=1, le=20), db: Session = Depends(get_db)
+):
+    """
+    Composições relacionadas à composição `codigo` por similaridade Jaccard
+    do BOM estrutural (camada 3 relacional). Para uso na seção
+    "Composições relacionadas" do detalhe da composição.
+    """
+    return {"items": crud.get_related_composicoes(db, codigo=codigo, limit=limit)}
 
 
 # --- Endpoints de Business Intelligence (BI) ---
@@ -721,12 +792,13 @@ def get_tendencias_classificacao(
         raise HTTPException(status_code=404, detail="Nenhum dado de tendência encontrado para os filtros especificados.")
     return result
 
-@app.get("/api/v1/public/bi/item/{tipo_item}/{codigo}/precos-uf", response_model=List[schemas.PrecoPorUF], tags=["tier_2", "Business Intelligence"], summary="Obter preços do item em todas UFs", response_description="Preço do item em todas as UFs (mapa de calor regional).", responses=_PUBLIC_VALIDATED)
+@app.get("/api/v1/public/bi/item/{tipo_item}/{codigo}/precos-uf", response_model=List[schemas.PrecoPorUF], tags=["tier_2", "Business Intelligence"], summary="Obter preços do item em todas UFs", response_description="Preço do item em todas as UFs (mapa de calor regional). `?meta=true` retorna envelope `{items, stats}` com estatísticas regionais.", responses=_PUBLIC_VALIDATED)
 def get_item_prices_all_ufs(
     tipo_item: str = Path(..., description="Tipo do item: 'insumo' ou 'composicao'"),
     codigo: int = Path(..., description="Código do item."),
     data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
     regime: str = Query("NAO_DESONERADO", description="Regime de custo/preço.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
+    meta: bool = Query(False, description="Se true, retorna envelope `{items, stats}` com estatísticas regionais."),
     db: Session = Depends(get_db)
 ):
     """
@@ -738,6 +810,9 @@ def get_item_prices_all_ufs(
     precos = crud.get_precos_all_ufs(db, tipo_item=tipo_item, codigo=codigo, data_referencia=data_referencia, regime=regime)
     if not precos:
         raise HTTPException(status_code=404, detail="Nenhum dado encontrado para o item e filtros especificados.")
+    if meta:
+        safe_items = [{"uf": p["uf"], "valor": float(p["valor"])} for p in precos]
+        return _search_response({"items": safe_items, "total": len(safe_items), "stats": crud._regional_stats(safe_items)}, meta=True)
     return precos
 
 @app.get("/api/v1/public/bi/composicao/{codigo}/produtividade", response_model=schemas.ComposicaoProdutividade, tags=["tier_2", "Business Intelligence"], summary="Obter análise de produtividade", response_description="Análise de produtividade (Mão de Obra / Material / Equipamento).", responses=_PUBLIC_NOT_FOUND)
@@ -773,3 +848,28 @@ def get_insumo_where_used(
     if not result:
         raise HTTPException(status_code=404, detail="Nenhuma composição encontrada que utilize este item.")
     return result
+
+@app.get("/api/v1/public/bi/cenario", response_model=schemas.CenarioResponse, tags=["tier_2", "Business Intelligence"], summary="Calcular cenário orçamentário consolidado", response_description="Cenário 'PowerBI do SINAPI': composições, total do BOM, Curva ABC, spread regional e tendências.", responses=_PUBLIC_VALIDATED)
+def get_cenario(
+    codigos: str = Query(..., description="Lista de códigos de composição separados por vírgula. Ex: 92711,88307"),
+    uf: str = Query(..., description="Unidade Federativa (UF). Ex: SP", min_length=2, max_length=2, examples={"exemplo": {"value": "SP"}}),
+    data_referencia: str = Query(..., description="Data de referência no formato AAAA-MM. Ex: 2025-09", examples={"exemplo": {"value": "2025-09"}}),
+    regime: str = Query("NAO_DESONERADO", description="Regime de custo/preço.", examples={"exemplo": {"value": "NAO_DESONERADO"}}),
+    meses: int = Query(12, description="Número de meses de tendências a analisar."),
+    db: Session = Depends(get_db)
+):
+    """
+    Consolida o cenário orçamentário de um grupo de composições:
+    total do BOM, Curva ABC, spread regional entre UFs e tendência mensal.
+    """
+    try:
+        code_list = [int(c.strip()) for c in codigos.split(",") if c.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="O parâmetro 'codigos' deve conter apenas números separados por vírgula.")
+    if not code_list:
+        raise HTTPException(status_code=400, detail="Informe ao menos um código de composição em 'codigos'.")
+
+    cenario = crud.get_cenario(db, codigos=code_list, uf=uf, data_referencia=data_referencia, regime=regime, meses=meses)
+    if not cenario["composicoes"]:
+        raise HTTPException(status_code=404, detail="Nenhuma composição encontrada para os códigos informados.")
+    return cenario

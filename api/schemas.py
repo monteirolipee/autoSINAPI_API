@@ -52,6 +52,7 @@ class Insumo(TraceabilityMixin):
     classificacao: Optional[str] = None
     origem_preco: Optional[str] = None
     status: Optional[str] = None
+    score: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -65,9 +66,83 @@ class Composicao(TraceabilityMixin):
     grupo: Optional[str] = None
     percentual_mo: Optional[float] = None
     status: Optional[str] = None
+    score: Optional[float] = None
 
     class Config:
         from_attributes = True
+
+# --- Schemas de Busca Paginada (SPEC-RULE-SEARCH) ---
+
+class InsumoSearchResult(BaseModel):
+    """Envelope paginado da busca de insumos (modo `meta=true`)."""
+    items: List["Insumo"]
+    total: int
+
+class ComposicaoSearchResult(BaseModel):
+    """Envelope paginado da busca de composições (modo `meta=true`)."""
+    items: List["Composicao"]
+    total: int
+
+# --- Schemas da Busca Unificada (STORY-SRC-002 / endpoint /search) ---
+
+class SearchMeta(BaseModel):
+    """Metadados de enriquecimento e degradação (SPEC-RULE-search-pipeline)."""
+    providers: List[str]
+    degraded: List[str] = []
+    did_you_mean: Optional[str] = None
+    page: Optional[int] = None
+    page_size: Optional[int] = None
+    total: Optional[int] = None
+
+class UsadoEmItem(BaseModel):
+    composicao_codigo: int
+    composicao_descricao: Optional[str] = None
+    nivel: Optional[int] = None
+
+class UsadoEm(BaseModel):
+    total: int
+    items: List[UsadoEmItem] = []
+
+class UnifiedSearchItem(BaseModel):
+    """Item unificado da busca (insumo ou composição)."""
+    codigo: int
+    descricao: str
+    unidade: str
+    tipo: str
+    valor: Optional[float] = None
+    classificacao: Optional[str] = None
+    grupo: Optional[str] = None
+    score: Optional[float] = None
+    usado_em: Optional[UsadoEm] = None
+
+class UnifiedSearchResult(BaseModel):
+    """Envelope da busca unificada (paginação + meta de camadas)."""
+    items: List[UnifiedSearchItem]
+    total: int
+    meta: SearchMeta
+
+class SearchSuggestItem(BaseModel):
+    """Sugestão de autocomplete cross-type."""
+    codigo: int
+    descricao: str
+    unidade: str
+    tipo: str
+    score: Optional[float] = 0.0
+
+class SearchSuggestResult(BaseModel):
+    items: List[SearchSuggestItem]
+
+class RelatedComposicao(BaseModel):
+    """Composição relacionada por similaridade Jaccard do BOM."""
+    codigo: int
+    descricao: str
+    unidade: Optional[str] = None
+    sobreposicao: Optional[int] = 0
+    alvo_itens: Optional[int] = 0
+    jaccard: Optional[float] = None
+
+class SearchRelatedResult(BaseModel):
+    items: List[RelatedComposicao]
 
 # --- Schemas de Business Intelligence (BI) ---
 
@@ -106,6 +181,8 @@ class HistoricoCusto(TraceabilityMixin):
     """Schema para um ponto de dado no histórico de custo de um item."""
     data_referencia: str
     valor: float
+    variacao_mensal: Optional[float] = None
+    variacao_pct: Optional[float] = None
     foi_retificado: Optional[bool] = False
     versao_original: Optional[str] = None
     versao_atual: Optional[str] = None
@@ -155,6 +232,9 @@ class TendenciaClassificacao(BaseModel):
     mes: str
     preco_medio: float
     qtd_insumos: int
+    variacao_mensal: Optional[float] = None
+    variacao_pct: Optional[float] = None
+    media_movel: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -166,6 +246,41 @@ class PrecoPorUF(BaseModel):
 
     class Config:
         from_attributes = True
+
+class RegionalStats(BaseModel):
+    """Schema com estatísticas regionais de preços entre UFs."""
+    media: float = 0.0
+    mediana: float = 0.0
+    min: float = 0.0
+    max: float = 0.0
+    desvio_padrao: float = 0.0
+    amplitude: float = 0.0
+    uf_mais_barato: Optional[str] = None
+    uf_mais_cara: Optional[str] = None
+
+class CenarioComposicao(BaseModel):
+    """Schema para uma composição dentro de um cenário consolidado."""
+    codigo: int
+    descricao: str
+    custo_total: float
+
+class CenarioTendencia(BaseModel):
+    """Schema para um ponto de tendência mensal do custo total do cenário."""
+    data_referencia: str
+    valor: float
+    variacao_mensal: Optional[float] = None
+    variacao_pct: Optional[float] = None
+
+class CenarioResponse(BaseModel):
+    """Schema para resposta consolidada de cenário BI ('PowerBI do SINAPI')."""
+    uf: str
+    data_referencia: str
+    regime: str
+    composicoes: List[CenarioComposicao]
+    total_bom: float
+    abc: List[CurvaABCItem]
+    spread_regional: RegionalStats
+    tendencias: List[CenarioTendencia]
 
 class ComposicaoProdutividade(BaseModel):
     """Schema para análise de produtividade de uma composição."""

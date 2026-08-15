@@ -1,5 +1,6 @@
 import pandas as pd
 import calendar
+import decimal
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional
@@ -73,29 +74,134 @@ def get_insumo_by_codigo(
     }).first()
     return result._mapping if result else None
 
+def _normalize_search_q(q: str):
+    """Retorna (termo_limpo, codigo_int). Se q for puramente numérico,
+    trata-o como busca por código exato (ADR-007 busca por código)."""
+    term = (q or "").strip()
+    return (term, int(term)) if term.isdigit() else (term, None)
+
+
+def _trigram_enabled(db: Session) -> bool:
+    """Detecta pg_trgm + unaccent + f_unaccent (migration 006). Nunca levanta
+    exceção: em fallback (sem extensões) a busca usa ILIKE simples."""
+    try:
+        row = db.execute(text(
+            "SELECT count(*) FROM pg_extension WHERE extname IN ('pg_trgm', 'unaccent')"
+        )).scalar()
+        if not (row and int(row) >= 2):
+            return False
+        fn = db.execute(text(
+            "SELECT count(*) FROM pg_proc WHERE proname = 'f_unaccent'"
+        )).scalar()
+        return bool(fn and int(fn) >= 1)
+    except Exception:
+        return False
+
+
+def _run_search(db: Session, query, params: dict) -> dict:
+    """Executa uma busca paginada e devolve {items, total}.
+
+    `total` vem de COUNT(*) OVER() (janela) para evitar query dupla e
+    garantir consistência com a página corrente (SPEC-RULE-SEARCH S3)."""
+    rows = db.execute(query, params).fetchall()
+    total = 0
+    items = []
+    for r in rows:
+        m = dict(r._mapping)
+        total = m.pop("total_count", 0)
+        items.append(_json_safe(m))
+    return {"items": items, "total": int(total) if rows else 0}
+
+
+def _json_safe(mapping: dict) -> dict:
+    """Normaliza tipos não-JSON (Decimal/date) para serialização direta."""
+    out = {}
+    for k, v in mapping.items():
+        if isinstance(v, decimal.Decimal):
+            out[k] = float(v)
+        elif isinstance(v, (datetime, date)):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out
+
+
+def _search_where(
+    db: Session, q: str, table_item: str, table_preco: str, item_alias: str,
+    join_col: str, select_cols: str, uf: str, data_referencia: str, regime: str,
+    skip: int, limit: int, extra_where: str = "", extra_params: Optional[dict] = None,
+) -> dict:
+    """Builder compartilhado das buscas (insumos/composições).
+
+    Ranking (ADR-006):
+      - pg_trgm + unaccent disponíveis e termo >= 3 chars → ranking por
+        `similarity`/`word_similarity` (score exposto no item).
+      - Caso contrário → fallback ILIKE (ordem alfabética), score NULL.
+    Busca por código (ADR-007): termo numérico casa `codigo = :codigo`.
+    """
+    start_date, end_date = _get_date_range(data_referencia)
+    term, codigo = _normalize_search_q(q)
+    trigram = _trigram_enabled(db) and len(term) >= 3
+    desc_col = f"{item_alias}.descricao"
+
+    if trigram:
+        like_clause = f"f_unaccent({desc_col}) ILIKE f_unaccent(:query)"
+        score_expr = (
+            f"GREATEST(similarity(f_unaccent({desc_col}), f_unaccent(:q)), "
+            f"word_similarity(f_unaccent(:q), f_unaccent({desc_col})) * 1.1) AS score"
+        )
+        order_clause = "score DESC,"
+    else:
+        like_clause = f"{desc_col} ILIKE :query"
+        score_expr = "NULL::float AS score"
+        order_clause = ""
+
+    code_clause = f" OR {item_alias}.codigo = :codigo" if codigo is not None else ""
+    params = {
+        "query": f"%{term}%",
+        "uf": uf.upper(), "start_date": start_date, "end_date": end_date,
+        "regime": regime.upper(), "status": settings.DEFAULT_ITEM_STATUS,
+        "skip": skip, "limit": limit,
+    }
+    if trigram:
+        params["q"] = term
+    if codigo is not None:
+        params["codigo"] = codigo
+    if extra_params:
+        params.update(extra_params)
+
+    query = text(f"""
+        SELECT {select_cols}, {score_expr}, COUNT(*) OVER() AS total_count
+        FROM {table_item} AS {item_alias}
+        JOIN {table_preco} AS p ON {item_alias}.codigo = p.{join_col}
+        WHERE ({like_clause}{code_clause}) AND {item_alias}.status = :status
+          AND p.uf = :uf AND p.data_referencia >= :start_date
+          AND p.data_referencia <= :end_date AND p.regime = :regime
+        {extra_where}
+        ORDER BY {order_clause}{item_alias}.descricao OFFSET :skip LIMIT :limit
+    """)
+    return _run_search(db, query, params)
+
+
 @cache_result(ttl=3600)
 def search_insumos_by_descricao(
     db: Session, q: str, uf: str, data_referencia: str, regime: str, skip: int, limit: int,
     classificacao: str = None
-) -> List[dict]:
-    start_date, end_date = _get_date_range(data_referencia)
-    query = text(f"""
-        SELECT i.codigo, i.descricao, i.unidade, i.classificacao, i.status, p.preco_mediano, p.origem_preco
-        FROM {settings.TABLE_INSUMOS} AS i
-        JOIN {settings.TABLE_PRECOS_INSUMOS} AS p ON i.codigo = p.insumo_codigo
-        WHERE i.descricao ILIKE :query AND i.status = :status AND p.uf = :uf
-          AND p.data_referencia >= :start_date AND p.data_referencia <= :end_date
-          AND p.regime = :regime
-          {'AND UPPER(i.classificacao) = UPPER(:classificacao)' if classificacao else ''}
-        ORDER BY i.descricao OFFSET :skip LIMIT :limit
-    """)
-    result = db.execute(query, {
-        "query": f"%{q}%", "uf": uf.upper(), "start_date": start_date, "end_date": end_date,
-        "regime": regime.upper(), "status": settings.DEFAULT_ITEM_STATUS,
-        "skip": skip, "limit": limit,
-        **({"classificacao": classificacao} if classificacao else {})
-    }).fetchall()
-    return [r._mapping for r in result]
+) -> dict:
+    extra_where = ""
+    extra_params = None
+    if classificacao:
+        extra_where = "AND UPPER(i.classificacao) = UPPER(:classificacao)"
+        extra_params = {"classificacao": classificacao}
+    return _search_where(
+        db, q,
+        table_item=settings.TABLE_INSUMOS, table_preco=settings.TABLE_PRECOS_INSUMOS,
+        item_alias="i", join_col="insumo_codigo",
+        select_cols=("i.codigo, i.descricao, i.unidade, i.classificacao, "
+                     "i.status, p.preco_mediano, p.origem_preco"),
+        uf=uf, data_referencia=data_referencia, regime=regime,
+        skip=skip, limit=limit, extra_where=extra_where, extra_params=extra_params,
+    )
 
 @cache_result(ttl=3600)
 def get_composicao_by_codigo(
@@ -122,25 +228,251 @@ def get_composicao_by_codigo(
 def search_composicoes_by_descricao(
     db: Session, q: str, uf: str, data_referencia: str, regime: str, skip: int, limit: int,
     grupo: str = None
-) -> List[dict]:
-    start_date, end_date = _get_date_range(data_referencia)
+) -> dict:
+    extra_where = ""
+    extra_params = None
+    if grupo:
+        extra_where = "AND UPPER(c.grupo) = UPPER(:grupo)"
+        extra_params = {"grupo": grupo}
+    return _search_where(
+        db, q,
+        table_item=settings.TABLE_COMPOSICOES, table_preco=settings.TABLE_CUSTOS_COMPOSICOES,
+        item_alias="c", join_col="composicao_codigo",
+        select_cols=("c.codigo, c.descricao, c.unidade, c.grupo, "
+                     "c.status, p.custo_total, p.percentual_mo"),
+        uf=uf, data_referencia=data_referencia, regime=regime,
+        skip=skip, limit=limit, extra_where=extra_where, extra_params=extra_params,
+    )
+
+
+# --- Seção 1b: Busca unificada, suggest, did-you-mean, related (STORY-SRC-002) ---
+
+def search_suggest(db: Session, q: str, limit: int = 8) -> List[dict]:
+    """Autocomplete cross-type (insumo+composição) por prefixo + trigrama.
+
+    Ranking: `word_similarity` (prefixo) + `similarity` (tolerante a erros).
+    Sem `pg_trgm` → fallback ILIKE simples. Sem contexto de preço (rápido)."""
+    term, _ = _normalize_search_q(q)
+    trigram = _trigram_enabled(db) and len(term) >= 2
+    ins, comp = settings.TABLE_INSUMOS, settings.TABLE_COMPOSICOES
+
+    if trigram:
+        score_expr = (
+            "GREATEST(similarity(f_unaccent(descricao), f_unaccent(:q)), "
+            "word_similarity(f_unaccent(:q), f_unaccent(descricao)) * 1.2) AS score"
+        )
+        match_clause = "f_unaccent(descricao) ILIKE f_unaccent(:like_q)"
+        params = {"q": term, "like_q": f"%{term}%", "limit": limit,
+                  "status": settings.DEFAULT_ITEM_STATUS}
+    else:
+        score_expr = "0.0 AS score"
+        match_clause = "descricao ILIKE :like_q"
+        params = {"like_q": f"%{term}%", "limit": limit,
+                  "status": settings.DEFAULT_ITEM_STATUS}
+
     query = text(f"""
-        SELECT c.codigo, c.descricao, c.unidade, c.grupo, c.status, p.custo_total, p.percentual_mo
-        FROM {settings.TABLE_COMPOSICOES} AS c
-        JOIN {settings.TABLE_CUSTOS_COMPOSICOES} AS p ON c.codigo = p.composicao_codigo
-        WHERE c.descricao ILIKE :query AND c.status = :status AND p.uf = :uf
-          AND p.data_referencia >= :start_date AND p.data_referencia <= :end_date
-          AND p.regime = :regime
-          {'AND UPPER(c.grupo) = UPPER(:grupo)' if grupo else ''}
-        ORDER BY c.descricao OFFSET :skip LIMIT :limit
+        SELECT codigo, descricao, unidade, 'insumo' AS tipo, {score_expr}
+        FROM {ins} WHERE {match_clause} AND status = :status
+        UNION ALL
+        SELECT codigo, descricao, unidade, 'composicao' AS tipo, {score_expr}
+        FROM {comp} WHERE {match_clause} AND status = :status
+        ORDER BY score DESC, descricao
+        LIMIT :limit
     """)
-    result = db.execute(query, {
-        "query": f"%{q}%", "uf": uf.upper(), "start_date": start_date, "end_date": end_date,
+    rows = db.execute(query, params).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
+_SORT_ORDERS = {
+    "relevance": "score DESC NULLS LAST, descricao",
+    "price_asc": "valor ASC NULLS LAST, descricao",
+    "price_desc": "valor DESC NULLS LAST, descricao",
+    "name": "descricao",
+    "name_asc": "descricao",
+    "name_desc": "descricao DESC",
+}
+
+
+def search_unified(
+    db: Session, q: str, uf: str, data_referencia: str, regime: str,
+    tipo: str = "all", sort: str = "relevance", skip: int = 0, limit: int = 100,
+    grupo: Optional[str] = None, classificacao: Optional[str] = None,
+) -> dict:
+    """Busca unificada insumo+composição (STORY-SRC-002).
+
+    UNION ALL dos dois tipos com coluna `tipo` e `valor` unificado
+    (preco_mediano p/ insumo; custo_total p/ composição). Dedupe por
+    (codigo, tipo) via ROW_NUMBER (a janela de data pode repetir o item em
+    vários meses). Sort e paginação server-side; total via COUNT(*) OVER()."""
+    start_date, end_date = _get_date_range(data_referencia)
+    term, codigo = _normalize_search_q(q)
+    trigram = _trigram_enabled(db) and len(term) >= 3
+
+    if trigram:
+        match_expr = "f_unaccent(t.descricao) ILIKE f_unaccent(:query)"
+        score_expr = (
+            "GREATEST(similarity(f_unaccent(t.descricao), f_unaccent(:q)), "
+            "word_similarity(f_unaccent(:q), f_unaccent(t.descricao)) * 1.1) AS score"
+        )
+    else:
+        match_expr = "t.descricao ILIKE :query"
+        score_expr = "NULL::float AS score"
+
+    code_clause = " OR t.codigo = :codigo" if codigo is not None else ""
+    params = {
+        "query": f"%{term}%", "uf": uf.upper(),
+        "start_date": start_date, "end_date": end_date,
         "regime": regime.upper(), "status": settings.DEFAULT_ITEM_STATUS,
         "skip": skip, "limit": limit,
-        **({"grupo": grupo} if grupo else {})
+    }
+    if trigram:
+        params["q"] = term
+    if codigo is not None:
+        params["codigo"] = codigo
+
+    # Condições de faceta aplicadas apenas ao branch correspondente.
+    filtro_insumo = ""
+    filtro_composicao = ""
+    if classificacao:
+        filtro_insumo = " AND UPPER(t.classificacao) = UPPER(:classificacao)"
+        params["classificacao"] = classificacao
+    if grupo:
+        filtro_composicao = " AND UPPER(t.grupo) = UPPER(:grupo)"
+        params["grupo"] = grupo
+
+    def _branch(item_table, price_table, join_col, tipo_label, val_col, categoria, filtro):
+        # STORY-SRC-002 fix: cada branch emite apenas as colunas que existem na
+        # tabela-fonte; a coluna do outro tipo vira literal NULL (o CASE com
+        # coluna inexistente causa UndefinedColumn mesmo em branch falso).
+        if tipo_label == 'insumo':
+            col_classif = 't.classificacao AS classificacao'
+            col_grupo = 'null::text AS grupo'
+        else:
+            col_classif = 'null::text AS classificacao'
+            col_grupo = 't.grupo AS grupo'
+        return f"""
+        SELECT t.codigo, t.descricao, t.unidade, '{tipo_label}' AS tipo,
+               {col_classif},
+               {col_grupo},
+               p.{val_col} AS valor, {score_expr},
+               ROW_NUMBER() OVER (PARTITION BY t.codigo ORDER BY p.data_referencia DESC) AS rn
+        FROM {item_table} AS t
+        JOIN {price_table} AS p ON t.codigo = p.{join_col}
+        WHERE ({match_expr}{code_clause}) AND t.status = :status
+          AND p.uf = :uf AND p.data_referencia >= :start_date
+          AND p.data_referencia <= :end_date AND p.regime = :regime{filtro}
+        """
+
+    include_insumo = tipo.lower() in ("all", "insumo")
+    include_composicao = tipo.lower() in ("all", "composicao")
+    branches = []
+    if include_insumo:
+        branches.append(_branch(settings.TABLE_INSUMOS, settings.TABLE_PRECOS_INSUMOS,
+                                "insumo_codigo", "insumo", "preco_mediano",
+                                "classificacao", filtro_insumo))
+    if include_composicao:
+        branches.append(_branch(settings.TABLE_COMPOSICOES, settings.TABLE_CUSTOS_COMPOSICOES,
+                                "composicao_codigo", "composicao", "custo_total",
+                                "grupo", filtro_composicao))
+    if not branches:
+        return {"items": [], "total": 0}
+
+    uniao = " UNION ALL ".join(branches)
+    order_clause = _SORT_ORDERS.get((sort or "relevance").lower(), _SORT_ORDERS["relevance"])
+    query = text(f"""
+        SELECT u.codigo, u.descricao, u.unidade, u.tipo, u.classificacao, u.grupo,
+               u.valor, u.score, COUNT(*) OVER() AS total_count
+        FROM ({uniao}) AS u
+        WHERE u.rn = 1
+        ORDER BY {order_clause} OFFSET :skip LIMIT :limit
+    """)
+    return _run_search(db, query, params)
+
+
+def did_you_mean(db: Session, q: str, threshold: float = 0.3) -> Optional[str]:
+    """Termo da base mais próximo de `q` via similarity trigram (limiar).
+
+    Usa o operador `%` (pg_trgm) para restringir candidatos pelo índice GIN.
+    Retorna None se `pg_trgm` ausente, termo curto/numérico ou sem similar (>0).
+    """
+    term, codigo = _normalize_search_q(q)
+    if codigo is not None or not term or len(term) < 3 or not _trigram_enabled(db):
+        return None
+    ins, comp = settings.TABLE_INSUMOS, settings.TABLE_COMPOSICOES
+    query = text(f"""
+        SELECT descricao, MAX(sim) AS sim FROM (
+            SELECT descricao, similarity(f_unaccent(descricao), f_unaccent(:q)) AS sim
+            FROM {ins} WHERE f_unaccent(descricao) % f_unaccent(:q) AND status = :status
+            UNION ALL
+            SELECT descricao, similarity(f_unaccent(descricao), f_unaccent(:q)) AS sim
+            FROM {comp} WHERE f_unaccent(descricao) % f_unaccent(:q) AND status = :status
+        ) AS t GROUP BY descricao ORDER BY sim DESC LIMIT 1
+    """)
+    row = db.execute(query, {"q": term, "status": settings.DEFAULT_ITEM_STATUS}).first()
+    if not row:
+        return None
+    best = dict(row._mapping)
+    sim = best.get("sim")
+    if sim is None or float(sim) < threshold or float(sim) >= 1.0:
+        return None
+    return best["descricao"]
+
+
+def get_related_composicoes(
+    db: Session, codigo: int, limit: int = 5
+) -> List[dict]:
+    """Composições relacionadas por similaridade Jaccard do BOM (camada 3).
+
+    Jaccard = |A∩B| / |A∪B| sobre o conjunto de itens de cada composição,
+    ignorando a própria. Estrutural (independente de UF/data) e barato com
+    cache 24h — comportamento de `ComposicaoDetail.related`."""
+    view = settings.VIEW_COMPOSICAO_ITENS
+    query = text(f"""
+        WITH alvo AS (
+            SELECT DISTINCT item_codigo, tipo_item
+            FROM {view} WHERE composicao_pai_codigo = :codigo
+        ),
+        cand AS (
+            SELECT v.composicao_pai_codigo, COUNT(DISTINCT v.item_codigo) AS sobreposicao
+            FROM {view} AS v
+            JOIN alvo AS a ON a.item_codigo = v.item_codigo AND a.tipo_item = v.tipo_item
+            WHERE v.composicao_pai_codigo <> :codigo
+            GROUP BY v.composicao_pai_codigo
+        ),
+        tam AS (
+            SELECT composicao_pai_codigo, COUNT(DISTINCT item_codigo) AS total_itens
+            FROM {view} GROUP BY composicao_pai_codigo
+        )
+        SELECT c.codigo, c.descricao, c.unidade, cand.sobreposicao,
+               (SELECT COUNT(*) FROM alvo) AS alvo_itens,
+               ROUND(cand.sobreposicao::numeric /
+                     ((SELECT COUNT(*) FROM alvo) + tam.total_itens - cand.sobreposicao), 4) AS jaccard
+        FROM cand
+        JOIN tam ON tam.composicao_pai_codigo = cand.composicao_pai_codigo
+        JOIN {settings.TABLE_COMPOSICOES} AS c ON c.codigo = cand.composicao_pai_codigo
+        WHERE c.status = :status
+        ORDER BY jaccard DESC, sobreposicao DESC, c.descricao
+        LIMIT :limit
+    """)
+    rows = db.execute(query, {
+        "codigo": codigo, "limit": limit, "status": settings.DEFAULT_ITEM_STATUS,
     }).fetchall()
-    return [r._mapping for r in result]
+    return [dict(r._mapping) for r in rows]
+
+
+@cache_result(ttl=86400)
+def get_usado_em_summary(db: Session, codigo: int, top: int = 5) -> dict:
+    """Resumo 'usado em' de um insumo (camada 3) — reusa `get_onde_usado` (cache 24h)."""
+    onde = get_onde_usado(db, codigo, "insumo")
+    items = [
+        {
+            "composicao_codigo": int(o.get("composicao_codigo") or 0),
+            "composicao_descricao": o.get("composicao_descricao"),
+            "nivel": o.get("nivel"),
+        }
+        for o in onde
+    ]
+    return {"total": len(onde), "items": items[:top]}
 
 # --- Seção 2: Funções de BI ---
 
@@ -211,6 +543,64 @@ WITH RECURSIVE composicao_completa (item_codigo, tipo_item, coeficiente_total, n
         item['classe_abc'] = 'A' if item['percentual_acumulado'] <= 80 else ('B' if item['percentual_acumulado'] <= 95 else 'C')
     return insumos[:top_n]
 
+def _compute_variacao(serie):
+    """
+    Enriquece uma série de pontos {data_referencia, valor} com variação mês a mês.
+
+    - 1º ponto: variacao_mensal e variacao_pct como None.
+    - demais: variacao_mensal = valor_atual - valor_anterior;
+      variacao_pct = variacao_mensal / valor_anterior * 100 (None se anterior == 0).
+    """
+    out = []
+    prev = None
+    for point in serie:
+        item = dict(point)
+        valor = float(item.get('valor') or 0)
+        if prev is None:
+            item['variacao_mensal'] = None
+            item['variacao_pct'] = None
+        else:
+            diff = valor - prev
+            item['variacao_mensal'] = round(diff, 2)
+            item['variacao_pct'] = round(diff / prev * 100, 4) if prev else None
+        out.append(item)
+        prev = valor
+    return out
+
+
+def _regional_stats(points):
+    """
+    Calcula estatísticas regionais básicas de uma lista {uf, valor}.
+    """
+    import statistics
+    if not points:
+        return {
+            "media": 0.0, "mediana": 0.0, "min": 0.0, "max": 0.0,
+            "desvio_padrao": 0.0, "amplitude": 0.0,
+            "uf_mais_barato": None, "uf_mais_cara": None,
+        }
+    valores = [float(p.get('valor') or 0) for p in points]
+    vals = [v for v in valores if v > 0]
+    mediana = statistics.median(valores)
+    min_, max_ = min(valores), max(valores)
+    uf_cara = min(points, key=lambda p: -float(p.get('valor') or 0))
+    uf_barato = min(points, key=lambda p: float(p.get('valor') or 0))
+    if uf_barato.get('valor') is None:
+        uf_mais_barato = None
+    else:
+        uf_mais_barato = uf_barato.get('uf')
+    return {
+        "media": round((sum(valores) / len(valores)) if valores else 0.0, 4),
+        "mediana": round(mediana, 4),
+        "min": round(min_, 4),
+        "max": round(max_, 4),
+        "desvio_padrao": round(statistics.pstdev(valores), 4) if len(valores) > 1 else 0.0,
+        "amplitude": round(max_ - min_, 4),
+        "uf_mais_barato": uf_mais_barato,
+        "uf_mais_cara": uf_cara.get('uf'),
+    }
+
+
 @cache_result(ttl=86400)
 def get_custo_historico(
     db: Session, tipo_item: str, codigo: int, uf: str, regime: str, data_inicio: str, data_fim: str
@@ -222,7 +612,8 @@ def get_custo_historico(
     _, e_date = _get_date_range(data_fim)
     query = text(f"SELECT TO_CHAR(data_referencia, 'YYYY-MM') as data_referencia, {val} as valor FROM {table} WHERE {col} = :c AND uf = :uf AND regime = :r AND data_referencia >= :s AND data_referencia <= :e ORDER BY data_referencia")
     result = db.execute(query, {"c": codigo, "uf": uf.upper(), "r": regime.upper(), "s": s_date, "e": e_date}).fetchall()
-    return [dict(r._mapping) for r in result]
+    serie = [dict(r._mapping) for r in result]
+    return _compute_variacao(serie)
 
 @cache_result(ttl=86400)
 def get_composicao_man_hours(db: Session, codigo: int):
@@ -384,8 +775,32 @@ def get_tendencias(
         ORDER BY 1, mes
     """)
     result = db.execute(query, params).fetchall()
-    return [dict(r._mapping) for r in result]
+    rows = [dict(r._mapping) for r in result]
 
+    from itertools import groupby
+    enriched = []
+    for _, group in groupby(rows, key=lambda r: r['classificacao']):
+        series = list(group)
+        with_var = _compute_variacao(series)
+        values = [float(r.get('preco_medio') or 0) for r in series]
+        variacao_periodo = None
+        inflacao_acumulada = None
+        if values and values[0] > 0 and len(values) > 1:
+            variacao_periodo = round((values[-1] - values[0]) / values[0] * 100, 4)
+            acum = 1.0
+            for prev, cur in zip(values, values[1:]):
+                acum *= (1 + (cur - prev) / prev) if prev > 0 else 1.0
+            inflacao_acumulada = round((acum - 1) * 100, 4)
+        for i, row in enumerate(with_var):
+            window = values[max(0, i - 2): i + 1]
+            media_movel = (sum(window) / len(window)) if window else None
+            row['media_movel'] = round(media_movel, 4) if media_movel is not None else None
+            row['variacao_periodo'] = variacao_periodo
+            row['inflacao_acumulada'] = inflacao_acumulada
+            enriched.append(row)
+    return enriched
+
+@cache_result(ttl=3600)
 def get_precos_all_ufs(
     db: Session, tipo_item: str, codigo: int, data_referencia: str, regime: str
 ) -> List[dict]:
@@ -523,3 +938,87 @@ def get_audit_events(
     query = text(query_str)
     result = db.execute(query, params).fetchall()
     return [dict(r._mapping) for r in result]
+
+def get_cenario_spread(
+    db: Session, codigos: List[int], uf: str, data_referencia: str, regime: str
+) -> dict:
+    """
+    Calcula o spread regional do custo total do cenário: estatísticas do custo
+    agregado (todas as composições) em todas as UFs disponíveis na referência.
+    """
+    start_date, end_date = _get_date_range(data_referencia)
+    query = text(f"""
+        SELECT uf, SUM(custo_total) as valor
+        FROM {settings.TABLE_CUSTOS_COMPOSICOES}
+        WHERE composicao_codigo IN :codigos
+          AND data_referencia >= :start_date AND data_referencia <= :end_date
+          AND regime = :regime
+        GROUP BY uf
+        ORDER BY uf
+    """)
+    result = db.execute(query, {
+        "codigos": tuple(codigos),
+        "start_date": start_date, "end_date": end_date, "regime": regime.upper()
+    }).fetchall()
+    points = [dict(r._mapping) for r in result]
+    return _regional_stats(points)
+
+
+def get_cenario_tendencias(
+    db: Session, codigos: List[int], uf: str, data_referencia: str, regime: str,
+    meses: int = 12
+) -> List[dict]:
+    """
+    Evolução mensal do custo total de um grupo de composições no cenário.
+    """
+    from dateutil.relativedelta import relativedelta
+    _, e_date = _get_date_range(data_referencia)
+    s_date = e_date - relativedelta(months=meses)
+    query = text(f"""
+        SELECT TO_CHAR(data_referencia, 'YYYY-MM') as data_referencia, SUM(custo_total) as valor
+        FROM {settings.TABLE_CUSTOS_COMPOSICOES}
+        WHERE composicao_codigo IN :codigos AND uf = :uf AND regime = :regime
+          AND data_referencia >= :s_date AND data_referencia <= :e_date
+        GROUP BY 1
+        ORDER BY 1
+    """)
+    result = db.execute(query, {
+        "codigos": tuple(codigos), "uf": uf.upper(), "regime": regime.upper(),
+        "s_date": s_date, "e_date": e_date
+    }).fetchall()
+    serie = [dict(r._mapping) for r in result]
+    return _compute_variacao(serie)
+
+
+def get_cenario(
+    db: Session, codigos: List[int], uf: str, data_referencia: str, regime: str, meses: int = 12
+) -> dict:
+    """
+    Consolida um cenário orçamentário 'PowerBI do SINAPI':
+    composições, total do BOM, Curva ABC, spread regional e tendências.
+    """
+    composicoes = []
+    for codigo in codigos:
+        comp = get_composicao_by_codigo(db, codigo, uf, data_referencia, regime) or {}
+        bom = get_composicao_bom(db, codigo, uf, data_referencia, regime)
+        custo_total = sum(float(i.get('custo_impacto_total') or 0) for i in (bom or []))
+        composicoes.append({
+            "codigo": codigo,
+            "descricao": comp.get('descricao') or str(codigo),
+            "custo_total": round(custo_total, 4),
+        })
+
+    total_bom = round(sum(float(c['custo_total']) for c in composicoes), 4)
+    abc = get_abc_curve_for_composicoes(db, codigos=codigos, uf=uf,
+                                        data_referencia=data_referencia, regime=regime) or []
+
+    return {
+        "uf": uf.upper(),
+        "data_referencia": data_referencia,
+        "regime": regime.upper(),
+        "composicoes": composicoes,
+        "total_bom": total_bom,
+        "abc": abc,
+        "spread_regional": get_cenario_spread(db, codigos, uf, data_referencia, regime),
+        "tendencias": get_cenario_tendencias(db, codigos, uf, data_referencia, regime, meses=meses),
+    }
