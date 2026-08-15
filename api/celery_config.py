@@ -30,6 +30,13 @@ beat_schedule = {
         "task": "api.tasks.schedule_monthly_etl",
         "schedule": crontab(day_of_month=2, hour=3, minute=0),
     },
+    # --- Fase 4 (ADR-006): população de embeddings vetoriais ---
+    # Diário às 04:00 UTC. Idempotente (upsert), degrada quando pgvector
+    # ou o provider de embeddings estiver fora.
+    "generate-embeddings": {
+        "task": "api.tasks.generate_embeddings_task",
+        "schedule": crontab(hour=4, minute=0),
+    },
 }
 
 # --- Limites de Concorrência e Sobrecarga ---

@@ -76,6 +76,20 @@ class Settings(BaseSettings):
     # --- Configurações de Segurança ---
     ALLOWED_ORIGINS: str = "*"  # Lista separada por vírgula. Ex: "https://demo.lamp.local,http://localhost:8080"
 
+    # --- Embeddings vetoriais (ADR-006 / STORY-SRC-004, Fase 4) ---
+    # Provider primário: bge-m3 no Ollama do notebook (lampbook, via Tailscale).
+    # Fallback: nomic-embed-text no Ollama local (server_ollama).
+    EMBEDDING_PRIMARY_URL: str = "http://100.69.111.112:11434"
+    EMBEDDING_PRIMARY_MODEL: str = "bge-m3"
+    EMBEDDING_FALLBACK_URL: str = "http://server-ollama:11434"
+    EMBEDDING_FALLBACK_MODEL: str = "nomic-embed-text"
+    # Slug padrão no registry embedding_models → tabela `vec_1024_bge_m3`.
+    SEARCH_VECTOR_MODEL: str = "bge_m3"
+    # Tamanho do lote de geração de embeddings (warm-up ~21s no notebook).
+    EMBEDDING_BATCH_SIZE: int = 16
+    # Timeout de inferência: 1ª chamada no notebook inclui warm-up (~21s+).
+    EMBEDDING_TIMEOUT: float = 120.0
+
 # Cria uma instância única das configurações que será importada pelo resto da aplicação.
 # Isso garante que as configurações sejam lidas e validadas uma única vez.
 settings = Settings()

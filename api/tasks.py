@@ -19,6 +19,7 @@ da API principal, garantindo que a API permaneça rápida e responsiva.
 import os
 import logging
 from celery import Celery
+from sqlalchemy import text
 import autosinapi
 
 logger = logging.getLogger("autosinapi.tasks")
@@ -41,15 +42,30 @@ def run_populate_task(db_config: dict, sinapi_config: dict, lock_token: str = No
     mode_suffix = 'sandbox' if os.getenv("AUTOSINAPI_SANDBOX") == "true" else 'prod'
     try:
         logger.info("Iniciando ETL para %s %s/%s (Modo: %s)...", state, month, year, mode_suffix)
-        return autosinapi.run_etl(
+        result = autosinapi.run_etl(
             db_config=db_config,
             sinapi_config=sinapi_config,
             mode='server'
         )
+        if result.get("status") == "success":
+            _invalidate_caches()
+        return result
     finally:
         # Libera o lock SOMENTE se este worker for o dono (token confere).
         from .populate_utils import release_populate_lock
         release_populate_lock(year, month, state, lock_token, sandbox=(mode_suffix == "sandbox"))
+
+
+def _invalidate_caches():
+    """Invalida caches da API e do Kong após ETL bem-sucedido."""
+    from .cache_utils import invalidate_cache
+    n1 = invalidate_cache('cache:get_global_stats:*')
+    n2 = invalidate_cache('cache:get_available_filters:*')
+    n3 = invalidate_cache('respcache:*')
+    logger.info(
+        "Caches pós-ETL invalidados: API stats=%d filters=%d Kong=%d",
+        n1, n2, n3
+    )
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=300)
@@ -101,3 +117,71 @@ def schedule_monthly_etl():
         except ImportError:
             pass
         raise
+
+
+@celery_app.task(acks_late=True, max_retries=3, default_retry_delay=120)
+def generate_embeddings_task(model_slug: str = "bge_m3",
+                             tipo_items: list = ("insumo", "composicao")):
+    """Gera/popula embeddings vetoriais (ADR-006 / STORY-SRC-004, Fase 4).
+
+    Lê os itens ATIVOS de cada tipo, gera embeddings em lotes via
+    `EmbeddingProvider` (bge-m3 no notebook, fallback nomic local) e faz
+    upsert na tabela `vec_<dims>_<slug>`. Degrada graciosamente quando a
+    extensão vector não existe ou o provider está fora (sem 5xx/crash).
+    """
+    from .config import settings
+    from .database import SessionLocal
+    from .vector_store import (
+        VECTOR_MODELS,
+        EmbeddingProvider,
+        ensure_vector_table,
+        get_embedding_table,
+        refresh_row_count,
+        upsert_batch,
+    )
+
+    if model_slug not in VECTOR_MODELS:
+        logger.warning("generate_embeddings_task: modelo desconhecido %s", model_slug)
+        return {"status": "skipped", "reason": f"unknown model {model_slug}"}
+
+    meta = VECTOR_MODELS[model_slug]
+    db = SessionLocal()
+    try:
+        tname = ensure_vector_table(db, meta["dims"], model_slug)
+        if tname is None:
+            logger.warning("generate_embeddings_task: pgvector indisponível; pulando")
+            return {"status": "skipped", "reason": "pgvector unavailable"}
+        provider = EmbeddingProvider()
+        batch_size = settings.EMBEDDING_BATCH_SIZE
+        totals = {}
+        for tipo in tipo_items:
+            rows = db.execute(
+                text(
+                    f"""
+                    SELECT codigo, descricao
+                    FROM {get_embedding_table(tipo)}
+                    WHERE status = 'ATIVO' AND descricao IS NOT NULL
+                    ORDER BY codigo
+                    """
+                )
+            ).fetchall()
+            embedded = 0
+            n = len(rows)
+            for i in range(0, n, batch_size):
+                chunk = rows[i:i + batch_size]
+                texts = [r.descricao for r in chunk]
+                vectors = provider.embed(texts)
+                if not vectors or len(vectors) != len(chunk):
+                    logger.warning("embed lote devolveu %d vecs p/ %d itens (tipo=%s)",
+                                   len(vectors or []), len(chunk), tipo)
+                    continue
+                embedded += upsert_batch(
+                    db, tname, tipo,
+                    [(int(r.codigo), vec) for r, vec in zip(chunk, vectors)],
+                )
+            totals[tipo] = embedded
+            logger.info("generate_embeddings_task %s: %d/%d embedded", tipo, embedded, n)
+        refresh_row_count(db, meta["dims"], model_slug)
+        return {"status": "success", "model": model_slug, "embedded": totals}
+    finally:
+        db.close()
