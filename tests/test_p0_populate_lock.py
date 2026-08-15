@@ -4,7 +4,7 @@ P0 audit fixes for the API layer (autosinapi_api).
 Covers:
   - Ownership-safe ETL lock (token de posse): só o dono pode liberar.
   - TTL do lock 3600s -> 5400s.
-  - Host padrão do banco SSOT (PG_* -> autodinapi-db.lamp.local; nunca "db").
+  - Host padrão do banco SSOT (PG_* -> autosinapi-db.lamp.local; nunca "db").
   - Host Redis SSOT (autosinapi_redis; nunca o alias genérico "redis",
     que colide com server_redis no server_mesh).
   - Status do ETL alinhado ("failure") consumido pela task Celery.
@@ -118,14 +118,14 @@ def test_dispatch_populate_passes_lock_token(monkeypatch):
 
 def test_build_db_config_uses_pg_vars(monkeypatch):
     """ADR-033 R1: db_config do worker usa PG_* (credenciais conhecidas/SSOT)."""
-    monkeypatch.setenv("PG_HOST", "autodinapi-db.lamp.local")
+    monkeypatch.setenv("PG_HOST", "autosinapi-db.lamp.local")
     monkeypatch.setenv("PG_DATABASE", "sinapi")
     monkeypatch.setenv("PG_USER", "admin")
     monkeypatch.setenv("PG_PASSWORD", "admin")
 
     cfg = populate_utils.build_db_config()
 
-    assert cfg["host"] == "autodinapi-db.lamp.local"
+    assert cfg["host"] == "autosinapi-db.lamp.local"
     assert cfg["database"] == "sinapi"
     assert cfg["user"] == "admin"
     assert cfg["password"] == "admin"
@@ -157,14 +157,14 @@ def test_build_db_config_never_defaults_to_db_host(monkeypatch):
     cfg = populate_utils.build_db_config()
 
     assert cfg["host"] != "db"
-    assert cfg["host"] == "autodinapi-db.lamp.local"
+    assert cfg["host"] == "autosinapi-db.lamp.local"
     assert cfg["database"] == "sinapi"
 
 
 def test_dispatch_populate_passes_pg_host(monkeypatch):
     """dispatch_populate repassa o db_config com PG_HOST ao ETL."""
     fake = _patch_redis(monkeypatch)
-    monkeypatch.setenv("PG_HOST", "autodinapi-db.lamp.local")
+    monkeypatch.setenv("PG_HOST", "autosinapi-db.lamp.local")
     from api import tasks as tasks_mod
 
     captured = {}
@@ -182,7 +182,7 @@ def test_dispatch_populate_passes_pg_host(monkeypatch):
 
     populate_utils.dispatch_populate(2024, 1, "SP")
 
-    assert captured["args"][0]["host"] == "autodinapi-db.lamp.local"
+    assert captured["args"][0]["host"] == "autosinapi-db.lamp.local"
 
 
 def test_run_populate_task_releases_only_owner(monkeypatch):

@@ -380,7 +380,7 @@ def base_availability(db: Session = Depends(get_db)):
     - `available_base`: competência disponível (calendário de publicação,
       confirmada por probe quando possível — B2.2/B4.3);
     - `consumed_base`: `max(data_referencia)` da tabela de preços (YYYY-MM);
-    - `status`: `current` | `new-base-available` | `suspicious` | `unknown`;
+    - `status`: `current` | `new-base-available` | `unknown`;
     - `sources`: cadeia de fontes consultadas (calendar, portal, ...);
     - `as_of`: timestamp da resposta.
     """

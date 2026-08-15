@@ -8,7 +8,7 @@ Funções puras (sem banco/rede) permitem TDD completo e reutilização em ambos
 ambientes:
 
 - `expected_latest_competence`: calendário de publicação (competência M publicada
-  ~dia 15 de M+1).
+  entre dias 9-13 de M+1, mediana ~dia 10).
 - `build_urls`: padrão canônico da Caixa desde 2025
   (`SINAPI-{year}-{month}-formato-xlsx.zip` / `-formato-pdf.zip`).
 - `resolve_status`: comparação disponível × consumida.
@@ -34,8 +34,10 @@ _FILE_TEMPLATES = (
     "SINAPI-{year}-{month}-formato-pdf.zip",
 )
 
-# Dia de publicação aproximado (B2.1): a competência M é publicada ~dia 15 de M+1.
-PUBLISH_DAY = 15
+# Dia de publicação aproximado (B2.1): a competência M é publicada entre dias 9-13
+# de M+1 (mediana ~dia 10, conforme série histórica 2025-2026).
+# Exceções: retificações (~dia 25), atrasos excepcionais (~dia 22).
+PUBLISH_DAY = 10
 
 
 def _shift_month(year: int, month: int, delta: int) -> Tuple[int, int]:
@@ -47,12 +49,13 @@ def _shift_month(year: int, month: int, delta: int) -> Tuple[int, int]:
 def expected_latest_competence(today: date, publish_day: int = PUBLISH_DAY) -> str:
     """Competência publicada mais recente, conforme calendário SINAPI (B2.1).
 
-    A competência `M` (mês de referência dos dados) é publicada ~dia 15 de `M+1`.
+    A competência `M` (mês de referência dos dados) é publicada entre dias 9-13
+    de `M+1` (mediana ~dia 10, conforme série histórica 2025-2026).
     Logo:
       - `today.day >= publish_day` → a competência do mês anterior foi publicada;
       - senão → a última publicada é a de dois meses atrás.
 
-    Ex.: 08/08/2026 → "2026-06"; 20/08/2026 → "2026-07".
+    Ex.: 08/08/2026 → "2026-06"; 11/08/2026 → "2026-07".
     """
     delta = -1 if today.day >= publish_day else -2
     year, month = _shift_month(today.year, today.month, delta)
@@ -76,9 +79,13 @@ def resolve_status(
 ) -> str:
     """Status da base comparando disponível × consumida (B3.2).
 
-    - `current`           → disponível == consumida;
+    A competência disponível é uma estimativa do calendário de publicação.
+    Como a Caixa publica em datas variáveis (dias 9-13) e podemos receber
+    dados por outros meios antes da publicação oficial, o status reflete:
+
+    - `current`           → disponível >= consumida (temos a base mais recente
+                            ou estamos adiantados em relação ao calendário);
     - `new-base-available`→ disponível > consumida (relatório novo para ingerir);
-    - `suspicious`        → disponível < consumida (regressão/inconsistência);
     - `unknown`           → disponível desconhecida.
     """
     if available is None:
@@ -89,7 +96,7 @@ def resolve_status(
         return "current"
     if available > consumed:
         return "new-base-available"
-    return "suspicious"
+    return "current"
 
 
 def compute_target_month(today: Optional[date] = None) -> Tuple[int, int]:

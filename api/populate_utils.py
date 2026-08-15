@@ -90,7 +90,7 @@ def build_db_config() -> dict:
     pelo quota-alerter garantem que quem escreve e quem lê o banco concordam.
     """
     return {
-        "host": os.getenv("PG_HOST", "autodinapi-db.lamp.local"),
+        "host": os.getenv("PG_HOST", "autosinapi-db.lamp.local"),
         "port": int(os.getenv("PG_PORT", "5432")),
         "database": os.getenv("PG_DATABASE", os.getenv("POSTGRES_DB", "sinapi")),
         "user": os.getenv("PG_USER", os.getenv("POSTGRES_USER", "admin")),

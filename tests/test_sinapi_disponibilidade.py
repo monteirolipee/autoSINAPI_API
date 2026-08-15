@@ -89,8 +89,8 @@ class TestResolveStatus:
     def test_available_newer_is_new_base_available(self):
         assert resolve_status("2026-07", "2026-06") == "new-base-available"
 
-    def test_available_older_is_suspicious(self):
-        assert resolve_status("2026-05", "2026-06") == "suspicious"
+    def test_available_older_is_current(self):
+        assert resolve_status("2026-05", "2026-06") == "current"
 
     def test_available_none_is_unknown(self):
         assert resolve_status(None, "2026-06") == "unknown"
