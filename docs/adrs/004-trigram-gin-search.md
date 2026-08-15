@@ -1,7 +1,7 @@
 # ADR 004 — Busca Textual Performática com Trigramas e Índices GIN
 
 ## Status
-Aprovado
+Implementado (migration `006_search_trigram_gin`, 2026-08-14)
 
 ## Contexto
 Um dos casos de uso principais da API do AutoSINAPI é a busca textual rápida por insumos e composições (ex: "cimento portland", "tijolo cerâmico"). 
