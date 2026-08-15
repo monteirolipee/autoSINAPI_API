@@ -40,6 +40,7 @@ NOT_FOUND_PATHS = [
     "/api/v1/public/bi/item/{tipo_item}/{codigo}/precos-uf",
     "/api/v1/public/bi/composicao/{codigo}/produtividade",
     "/api/v1/public/bi/insumo/{codigo}/onde-usado",
+    "/api/v1/public/bi/cenario",
 ]
 
 # Endpoints que validam tipo_item / data_fim / codigos e levantam 400.
@@ -50,6 +51,7 @@ BAD_REQUEST_PATHS = [
     "/api/v1/public/bi/item/{tipo_item}/{codigo}/precos-uf",
     "/api/v1/public/bi/tendencias/por-classificacao",
     "/api/v1/public/bi/insumo/{codigo}/onde-usado",
+    "/api/v1/public/bi/cenario",
 ]
 
 

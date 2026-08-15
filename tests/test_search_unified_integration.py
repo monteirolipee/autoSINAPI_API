@@ -1,0 +1,88 @@
+"""
+Testes de integração REAL da busca (STORY-SRC-002 fix / bug UndefinedColumn).
+
+Executam SQL contra o Postgres da stack via SQLAlchemy (sem TestClient, que
+depende de httpx2 não instalado no container). Skip automático se o banco
+não estiver acessível (mesmo padrão de test_legal).
+
+Cobertura:
+  - search_unified: tipo=all / insumo / composicao não lançam UndefinedColumn.
+  - busca por código numérico exato retorna resultados.
+  - did_you_mean retorna sugestão para termo sem resultado.
+  - search_suggest cross-type funciona de ponta a ponta.
+  - get_related_composicoes (Jaccard) estrutural.
+"""
+import os
+
+import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
+
+from api import crud
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("DATABASE_URL"),
+    reason="DATABASE_URL ausente — testes de integração requerem o banco da stack",
+)
+
+
+@pytest.fixture(scope="module")
+def db():
+    try:
+        eng = create_engine(os.environ["DATABASE_URL"])
+        with eng.connect() as c:
+            c.execute(text("SELECT 1"))
+        session = Session(eng)
+    except Exception as exc:  # pragma: no cover - ambiente
+        pytest.skip(f"banco de integração indisponível: {exc}")
+    yield session
+    session.close()
+    eng.dispose() if "eng" in dir() else None
+
+
+class TestSearchUnifiedIntegration:
+    def test_all_types_runs(self, db):
+        result = crud.search_unified(db, "areia", "SP", "2026-07", "NAO_DESONERADO",
+                                     tipo="all", sort="relevance", skip=0, limit=5)
+        assert result["total"] > 0
+        tipos = {it["tipo"] for it in result["items"]}
+        assert tipos.intersection({"insumo", "composicao"})
+
+    def test_insumo_type_returns_only_insumos(self, db):
+        result = crud.search_unified(db, "areia", "SP", "2026-07", "NAO_DESONERADO",
+                                     tipo="insumo", sort="relevance", skip=0, limit=5)
+        assert result["total"] > 0
+        assert all(it["tipo"] == "insumo" for it in result["items"])
+
+    def test_composicao_type_returns_only_composicoes(self, db):
+        result = crud.search_unified(db, "alvenaria", "SP", "2026-07", "NAO_DESONERADO",
+                                     tipo="composicao", sort="relevance", skip=0, limit=5)
+        assert result["total"] > 0
+        assert all(it["tipo"] == "composicao" for it in result["items"])
+
+    def test_numeric_code_exact_included(self, db):
+        result = crud.search_unified(db, "366", "SP", "2026-07", "NAO_DESONERADO",
+                                     tipo="all", sort="relevance", skip=0, limit=5)
+        codes = [it["codigo"] for it in result["items"]]
+        assert 366 in codes
+
+    def test_did_you_mean_returns_suggestion(self, db):
+        if not crud._trigram_enabled(db):
+            pytest.skip("pg_trgm indisponível")
+        dym = crud.did_you_mean(db, "projetto")
+        assert dym  # sugere termo mais próximo (ex: GESSO PROJETADO)
+
+
+class TestSuggestIntegration:
+    def test_prefix_cross_type(self, db):
+        out = crud.search_suggest(db, "cim", limit=5)
+        assert out
+        assert any(it.get("tipo") in ("insumo", "composicao") for it in out)
+
+
+class TestRelatedIntegration:
+    def test_jaccard_returns_related(self, db):
+        out = crud.get_related_composicoes(db, 88307, limit=3)
+        if not out:
+            pytest.skip("composição 88307 sem relacionadas")
+        assert out[0].get("jaccard", 0) >= 0

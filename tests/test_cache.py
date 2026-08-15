@@ -70,6 +70,21 @@ def test_cache_miss_executes_sql(mock_db, mock_redis):
     crud.get_composicao_bom(mock_db, codigo, uf, referencia, regime)
     assert mock_db.execute.call_count == 1
 
+def test_cache_hit_prevents_db_call_precos_all_ufs(mock_db, mock_redis):
+    """Cache hit para get_precos_all_ufs evita execução SQL (audit A5)."""
+    mock_db.execute.return_value.fetchall.return_value = [
+        Mock(_mapping={"uf": "SP", "valor": 10.5})
+    ]
+
+    crud.get_precos_all_ufs(mock_db, tipo_item="insumo", codigo=123,
+                            data_referencia="2025-09", regime="NAO_DESONERADO")
+    assert mock_db.execute.call_count == 1
+
+    mock_redis.get.return_value = '[{"uf": "SP"}]'
+    crud.get_precos_all_ufs(mock_db, tipo_item="insumo", codigo=123,
+                            data_referencia="2025-09", regime="NAO_DESONERADO")
+    assert mock_db.execute.call_count == 1
+
 def test_invalidate_cache(mock_redis):
     """invalidate_cache deleta chaves por padrão."""
     from api.cache_utils import invalidate_cache
