@@ -93,6 +93,7 @@ class SearchMeta(BaseModel):
     page: Optional[int] = None
     page_size: Optional[int] = None
     total: Optional[int] = None
+    relaxed: bool = False
 
 class UsadoEmItem(BaseModel):
     composicao_codigo: int

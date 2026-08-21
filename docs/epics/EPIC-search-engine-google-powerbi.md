@@ -84,7 +84,7 @@ Cada camada reporta status em `meta.providers`. O contrato nunca muda.
 - [x] `/search` híbrido com RRF; `SEARCH_VECTOR_MODEL` seleciona tabela.
 - [x] População: 16.731 embeddings (bge-m3, 1024 dims).
 - [ ] `/search/expand` LLM (ollama small, timeout 800ms, cache 24h), env-flag. *(remanescente)*
-- [ ] MCP server: tools `sinapi_search`, `sinapi_search_related`, `sinapi_search_suggest`, `sinapi_search_expand`. *(remanescente)*
+- [x] MCP server: tool `sinapi_search` (busca unificada `/search`, multi-termo AND + fallback OR). *(sinapi_search_related/suggest/expand remanescentes)*
 
 ## Non-goals (nesta iteração)
 

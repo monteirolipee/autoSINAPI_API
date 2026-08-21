@@ -37,6 +37,13 @@ beat_schedule = {
         "task": "api.tasks.generate_embeddings_task",
         "schedule": crontab(hour=4, minute=0),
     },
+    # --- Plano de Gestão (D5): rollup horário de consumo ---
+    # A cada 10 minutos, cobre a última hora completa de usage_logs
+    # (idempotente por upsert; janela 2h para tolerância a atrasos).
+    "rollup-consumption-hourly": {
+        "task": "api.tasks.rollup_consumption_hourly",
+        "schedule": crontab(minute="*/10"),
+    },
 }
 
 # --- Limites de Concorrência e Sobrecarga ---

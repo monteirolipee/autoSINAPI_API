@@ -81,6 +81,53 @@ def _normalize_search_q(q: str):
     return (term, int(term)) if term.isdigit() else (term, None)
 
 
+def _tokenize_query(q: str) -> List[str]:
+    """Divide a query em tokens (palavras) para busca multi-termo estilo Google.
+
+    Espaços repetidos e termo vazio são tolerados (não geram tokens)."""
+    return [tok for tok in (q or "").split() if tok]
+
+
+def _build_token_match(desc_expr: str, tokens: List[str], trigram: bool,
+                       combine: str = "AND") -> tuple[str, dict, str]:
+    """Monta cláusula de correspondência por token (Google-style multi-termo).
+
+    Args:
+        desc_expr: expressão da coluna de descrição (ex.: "t.descricao").
+        tokens: termos da query já tokenizados.
+        trigram: True se pg_trgm/unaccent disponíveis (ranking por similaridade).
+        combine: "AND" (todos os tokens — precisão) ou "OR" (qualquer token —
+            fallback parcial quando AND não encontra itens).
+
+    Returns:
+        (match_clause, params, score_expr): cláusula WHERE por token, bind params
+        (`:t_N` para ILIKE, `:q_N` para similaridade) e expressão de score.
+
+    Score = soma por token de `GREATEST(similarity, word_similarity * 1.1)` quando
+    trigram ativo e token >= 3 chars; caso contrário `NULL::float` (fallback ILIKE).
+    """
+    joiner = " AND " if combine == "AND" else " OR "
+    clauses, params, score_parts = [], {}, []
+    for i, tok in enumerate(tokens):
+        tkey, qkey = f"t_{i}", f"q_{i}"
+        params[tkey] = f"%{tok}%"
+        if trigram and len(tok) >= 3:
+            params[qkey] = tok
+            clauses.append(f"f_unaccent({desc_expr}) ILIKE f_unaccent(:{tkey})")
+            score_parts.append(
+                f"GREATEST(similarity(f_unaccent({desc_expr}), f_unaccent(:{qkey})), "
+                f"word_similarity(f_unaccent(:{qkey}), f_unaccent({desc_expr})) * 1.1)",
+            )
+        else:
+            clauses.append(f"{desc_expr} ILIKE :{tkey}")
+    match_clause = "(" + joiner.join(clauses) + ")"
+    if score_parts:
+        score_expr = "(" + " + ".join(score_parts) + ") AS score"
+    else:
+        score_expr = "NULL::float AS score"
+    return match_clause, params, score_expr
+
+
 def _trigram_enabled(db: Session) -> bool:
     """Detecta pg_trgm + unaccent + f_unaccent (migration 006). Nunca levanta
     exceção: em fallback (sem extensões) a busca usa ILIKE simples."""
@@ -130,57 +177,83 @@ def _search_where(
     db: Session, q: str, table_item: str, table_preco: str, item_alias: str,
     join_col: str, select_cols: str, uf: str, data_referencia: str, regime: str,
     skip: int, limit: int, extra_where: str = "", extra_params: Optional[dict] = None,
+    combine: str = "AND",
 ) -> dict:
     """Builder compartilhado das buscas (insumos/composições).
 
-    Ranking (ADR-006):
-      - pg_trgm + unaccent disponíveis e termo >= 3 chars → ranking por
+    Ranking (ADR-006) + multi-termo (EPIC-search-engine-google-powerbi):
+      - pg_trgm + unaccent disponíveis e token >= 3 chars → ranking por
         `similarity`/`word_similarity` (score exposto no item).
       - Caso contrário → fallback ILIKE (ordem alfabética), score NULL.
+      - Query com 2+ tokens → AND por token (todos presentes, ordem tolerada).
+        Se AND não retornar itens, relaxa para OR (resultados parciais) e marca
+        `relaxed=True` no resultado.
+      - Token único → caminho legado preservado (zero breaking change).
     Busca por código (ADR-007): termo numérico casa `codigo = :codigo`.
     """
     start_date, end_date = _get_date_range(data_referencia)
     term, codigo = _normalize_search_q(q)
-    trigram = _trigram_enabled(db) and len(term) >= 3
+    tokens = _tokenize_query(term)
+    if not tokens:
+        return {"items": [], "total": 0}
+    trigram = _trigram_enabled(db)
     desc_col = f"{item_alias}.descricao"
+    use_trigram_score = trigram and any(len(t) >= 3 for t in tokens)
 
-    if trigram:
-        like_clause = f"f_unaccent({desc_col}) ILIKE f_unaccent(:query)"
-        score_expr = (
-            f"GREATEST(similarity(f_unaccent({desc_col}), f_unaccent(:q)), "
-            f"word_similarity(f_unaccent(:q), f_unaccent({desc_col})) * 1.1) AS score"
+    token_params: dict = {}
+    if len(tokens) >= 2:
+        match_clause, token_params, score_expr = _build_token_match(
+            desc_col, tokens, trigram, combine,
         )
-        order_clause = "score DESC,"
     else:
-        like_clause = f"{desc_col} ILIKE :query"
-        score_expr = "NULL::float AS score"
-        order_clause = ""
+        tok = tokens[0]
+        if trigram and len(tok) >= 3:
+            match_clause = f"f_unaccent({desc_col}) ILIKE f_unaccent(:query)"
+            score_expr = (
+                f"GREATEST(similarity(f_unaccent({desc_col}), f_unaccent(:q)), "
+                f"word_similarity(f_unaccent(:q), f_unaccent({desc_col})) * 1.1) AS score"
+            )
+        else:
+            match_clause = f"{desc_col} ILIKE :query"
+            score_expr = "NULL::float AS score"
 
     code_clause = f" OR {item_alias}.codigo = :codigo" if codigo is not None else ""
+    order_clause = "score DESC," if use_trigram_score else ""
     params = {
-        "query": f"%{term}%",
         "uf": uf.upper(), "start_date": start_date, "end_date": end_date,
         "regime": regime.upper(), "status": settings.DEFAULT_ITEM_STATUS,
         "skip": skip, "limit": limit,
     }
-    if trigram:
-        params["q"] = term
+    if len(tokens) == 1:
+        params["query"] = f"%{tokens[0]}%"
+        if trigram and len(tokens[0]) >= 3:
+            params["q"] = tokens[0]
     if codigo is not None:
         params["codigo"] = codigo
     if extra_params:
         params.update(extra_params)
+    params.update(token_params)
 
     query = text(f"""
         SELECT {select_cols}, {score_expr}, COUNT(*) OVER() AS total_count
         FROM {table_item} AS {item_alias}
         JOIN {table_preco} AS p ON {item_alias}.codigo = p.{join_col}
-        WHERE ({like_clause}{code_clause}) AND {item_alias}.status = :status
+        WHERE ({match_clause}{code_clause}) AND {item_alias}.status = :status
           AND p.uf = :uf AND p.data_referencia >= :start_date
           AND p.data_referencia <= :end_date AND p.regime = :regime
         {extra_where}
         ORDER BY {order_clause}{item_alias}.descricao OFFSET :skip LIMIT :limit
     """)
-    return _run_search(db, query, params)
+    result = _run_search(db, query, params)
+    if result["total"] == 0 and len(tokens) >= 2 and combine == "AND":
+        result = _search_where(
+            db, q, table_item=table_item, table_preco=table_preco, item_alias=item_alias,
+            join_col=join_col, select_cols=select_cols, uf=uf,
+            data_referencia=data_referencia, regime=regime, skip=skip, limit=limit,
+            extra_where=extra_where, extra_params=extra_params, combine="OR",
+        )
+        result["relaxed"] = True
+    return result
 
 
 @cache_result(ttl=3600)
@@ -297,38 +370,56 @@ def search_unified(
     db: Session, q: str, uf: str, data_referencia: str, regime: str,
     tipo: str = "all", sort: str = "relevance", skip: int = 0, limit: int = 100,
     grupo: Optional[str] = None, classificacao: Optional[str] = None,
+    combine: str = "AND",
 ) -> dict:
-    """Busca unificada insumo+composição (STORY-SRC-002).
+    """Busca unificada insumo+composição (STORY-SRC-002 / "Google do SINAPI").
 
     UNION ALL dos dois tipos com coluna `tipo` e `valor` unificado
     (preco_mediano p/ insumo; custo_total p/ composição). Dedupe por
     (codigo, tipo) via ROW_NUMBER (a janela de data pode repetir o item em
-    vários meses). Sort e paginação server-side; total via COUNT(*) OVER()."""
+    vários meses). Sort e paginação server-side; total via COUNT(*) OVER().
+
+    Multi-termo: 2+ tokens → AND por token (todos presentes, ordem tolerada);
+    se AND não encontrar itens, relaxa para OR (`relaxed=True`). Token único →
+    caminho legado preservado (zero breaking change)."""
     start_date, end_date = _get_date_range(data_referencia)
     term, codigo = _normalize_search_q(q)
-    trigram = _trigram_enabled(db) and len(term) >= 3
+    tokens = _tokenize_query(term)
+    if not tokens:
+        return {"items": [], "total": 0}
+    trigram = _trigram_enabled(db)
 
-    if trigram:
-        match_expr = "f_unaccent(t.descricao) ILIKE f_unaccent(:query)"
-        score_expr = (
-            "GREATEST(similarity(f_unaccent(t.descricao), f_unaccent(:q)), "
-            "word_similarity(f_unaccent(:q), f_unaccent(t.descricao)) * 1.1) AS score"
+    token_params: dict = {}
+    if len(tokens) >= 2:
+        match_expr, token_params, score_expr = _build_token_match(
+            "t.descricao", tokens, trigram, combine,
         )
     else:
-        match_expr = "t.descricao ILIKE :query"
-        score_expr = "NULL::float AS score"
+        tok = tokens[0]
+        if trigram and len(tok) >= 3:
+            match_expr = "f_unaccent(t.descricao) ILIKE f_unaccent(:query)"
+            score_expr = (
+                "GREATEST(similarity(f_unaccent(t.descricao), f_unaccent(:q)), "
+                "word_similarity(f_unaccent(:q), f_unaccent(t.descricao)) * 1.1) AS score"
+            )
+        else:
+            match_expr = "t.descricao ILIKE :query"
+            score_expr = "NULL::float AS score"
 
-    code_clause = " OR t.codigo = :codigo" if codigo is not None else ""
+    code_clause = f" OR t.codigo = :codigo" if codigo is not None else ""
     params = {
-        "query": f"%{term}%", "uf": uf.upper(),
+        "uf": uf.upper(),
         "start_date": start_date, "end_date": end_date,
         "regime": regime.upper(), "status": settings.DEFAULT_ITEM_STATUS,
         "skip": skip, "limit": limit,
     }
-    if trigram:
-        params["q"] = term
+    if len(tokens) == 1:
+        params["query"] = f"%{tokens[0]}%"
+        if trigram and len(tokens[0]) >= 3:
+            params["q"] = tokens[0]
     if codigo is not None:
         params["codigo"] = codigo
+    params.update(token_params)
 
     # Condições de faceta aplicadas apenas ao branch correspondente.
     filtro_insumo = ""
@@ -386,7 +477,15 @@ def search_unified(
         WHERE u.rn = 1
         ORDER BY {order_clause} OFFSET :skip LIMIT :limit
     """)
-    return _run_search(db, query, params)
+    result = _run_search(db, query, params)
+    if result["total"] == 0 and len(tokens) >= 2 and combine == "AND":
+        result = search_unified(
+            db, q, uf=uf, data_referencia=data_referencia, regime=regime,
+            tipo=tipo, sort=sort, skip=skip, limit=limit,
+            grupo=grupo, classificacao=classificacao, combine="OR",
+        )
+        result["relaxed"] = True
+    return result
 
 
 def did_you_mean(db: Session, q: str, threshold: float = 0.3) -> Optional[str]:

@@ -28,6 +28,7 @@ def build_meta(
     page: Optional[int] = None,
     page_size: Optional[int] = None,
     total: Optional[int] = None,
+    relaxed: bool = False,
 ) -> dict:
     return {
         "providers": list(providers),
@@ -36,6 +37,7 @@ def build_meta(
         "page": page,
         "page_size": page_size,
         "total": total,
+        "relaxed": relaxed,
     }
 
 
@@ -124,7 +126,8 @@ def unified_search(
 
     page_no = (skip // limit) + 1 if limit else 1
     meta = build_meta(providers, degraded, did_you_mean=dym,
-                      page=page_no, page_size=limit, total=total)
+                      page=page_no, page_size=limit, total=total,
+                      relaxed=bool(result.get("relaxed", False)))
     # total é o total textual; o RRF apenas reordena dentro da página →
     # mantém contrato (total >= len(items)).
     return {"items": items, "total": total, "meta": meta}

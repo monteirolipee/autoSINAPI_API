@@ -66,6 +66,29 @@ class TestSearchUnifiedIntegration:
         codes = [it["codigo"] for it in result["items"]]
         assert 366 in codes
 
+    def test_multiword_returns_and_results(self, db):
+        result = crud.search_unified(db, "alvenaria cimento", "SP", "2026-07",
+                                     "NAO_DESONERADO", tipo="all", sort="relevance",
+                                     skip=0, limit=10)
+        assert result["total"] > 0
+        assert all("alvenaria" in it["descricao"].lower() and "cimento" in it["descricao"].lower()
+                   for it in result["items"])
+
+    def test_multiword_insumos_endpoint(self, db):
+        result = crud.search_insumos_by_descricao(
+            db, "perfil aco", "SP", "2026-07", "NAO_DESONERADO", skip=0, limit=10,
+        )
+        assert result["total"] > 0
+        assert all("perfil" in it["descricao"].lower() and "aco" in it["descricao"].lower()
+                   for it in result["items"])
+
+    def test_multiword_or_fallback_returns_partial(self, db):
+        result = crud.search_unified(db, "alvenaria cimento inexistente_zz", "SP", "2026-07",
+                                     "NAO_DESONERADO", tipo="all", sort="relevance",
+                                     skip=0, limit=10)
+        assert result["total"] > 0
+        assert result.get("relaxed") is True
+
     def test_did_you_mean_returns_suggestion(self, db):
         if not crud._trigram_enabled(db):
             pytest.skip("pg_trgm indisponível")

@@ -250,6 +250,21 @@ class TestSearchPackage:
         dym.assert_called_once()
         assert result["meta"]["did_you_mean"] == "cimento portland"
 
+    def test_relaxed_propagates_to_meta_when_or_fallback(self):
+        db = Mock()
+        items = [
+            {"codigo": 87327, "tipo": "composicao", "valor": 100.0, "score": 1.1},
+        ]
+        with patch.object(crud, "_trigram_enabled", return_value=True), \
+             patch.object(crud, "search_unified",
+                          return_value={"items": items, "total": 1, "relaxed": True}), \
+             patch.object(crud, "get_usado_em_summary"), \
+             patch.object(crud, "did_you_mean", return_value=None):
+            result = search_pkg.unified_search(
+                db, "alvenaria cimento portland", "SP", "2025-09", "NAO_DESONERADO",
+                tipo="all", sort="relevance", vector="off", skip=0, limit=10)
+        assert result["meta"]["relaxed"] is True
+
 
 class TestSearchEndpoints:
     @pytest.fixture

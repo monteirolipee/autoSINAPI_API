@@ -119,6 +119,87 @@ def schedule_monthly_etl():
         raise
 
 
+@celery_app.task(acks_late=True, max_retries=2, default_retry_delay=300)
+def rollup_consumption_hourly():
+    """Rollup horário de consumo (saas.consumption_hourly).
+
+    Plano de Gestão (D5): agrega saas.usage_logs por hora (endpoint, tier,
+    plan_slug) com latência p50/p95/max, cache HIT/MISS e custo estimado, com
+    upsert idempotente. Roda via Celery beat a cada 10 minutos cobrindo a
+    última hora completa. Popula a tabela que hoje está vazia e alimenta o
+    futuro módulo interno de observabilidade/gestão/BI.
+    """
+    from .config import settings
+    from .database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        row = db.execute(text("""
+            WITH agg AS (
+                SELECT
+                    date_trunc('hour', requested_at) AS hour_start,
+                    endpoint,
+                    CASE
+                        WHEN plan_slug IS NULL OR plan_slug = '' THEN '__anon__'
+                        ELSE plan_slug
+                    END AS plan_slug,
+                    CASE
+                        WHEN endpoint ~ '/bi/|/bom|/curva-abc|/tendencias|/precos-uf'
+                             THEN 'tier_2'
+                        WHEN endpoint ~ '/insumos|/composicoes|/produtividade'
+                             THEN 'tier_1'
+                        ELSE 'tier_1'
+                    END AS tier,
+                    COUNT(*) AS total_requests,
+                    COUNT(*) FILTER (WHERE cache_status = 'HIT') AS cache_hits,
+                    COUNT(*) FILTER (WHERE cache_status = 'MISS') AS cache_misses,
+                    COALESCE(SUM(latency_ms), 0) AS sum_latency_ms,
+                    ROUND(AVG(latency_ms), 3) AS avg_latency_ms,
+                    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) AS p95_latency_ms,
+                    MAX(latency_ms) AS max_latency_ms,
+                    ROUND(COUNT(*) * 0.00000023, 8) AS estimated_cost
+                FROM saas.usage_logs
+                WHERE requested_at >= date_trunc('hour', now() - interval '2 hours')
+                GROUP BY 1, 2, 3, 4
+            )
+            INSERT INTO saas.consumption_hourly
+                (hour_start, endpoint, tier, plan_slug, total_requests,
+                 cache_hits, cache_misses, sum_latency_ms, avg_latency_ms,
+                 p95_latency_ms, max_latency_ms, estimated_cost)
+            SELECT
+                hour_start, endpoint, tier, plan_slug, total_requests,
+                cache_hits, cache_misses, sum_latency_ms, avg_latency_ms,
+                p95_latency_ms, max_latency_ms, estimated_cost
+            FROM agg
+            ON CONFLICT (hour_start, endpoint, plan_slug) DO UPDATE SET
+                tier = EXCLUDED.tier,
+                total_requests = EXCLUDED.total_requests,
+                cache_hits = EXCLUDED.cache_hits,
+                cache_misses = EXCLUDED.cache_misses,
+                sum_latency_ms = EXCLUDED.sum_latency_ms,
+                avg_latency_ms = EXCLUDED.avg_latency_ms,
+                p95_latency_ms = EXCLUDED.p95_latency_ms,
+                max_latency_ms = EXCLUDED.max_latency_ms,
+                estimated_cost = EXCLUDED.estimated_cost
+            RETURNING hour_start
+        """))
+        rows = row.fetchall()
+        db.commit()
+        logger.info("rollup_consumption_hourly: %d hora(s) atualizada(s)", len(rows))
+        return {"status": "success", "hours": len(rows)}
+    except Exception as exc:
+        db.rollback()
+        logger.error("rollup_consumption_hourly failed: %s", exc, exc_info=True)
+        try:
+            import sentry_sdk
+            sentry_sdk.capture_exception(exc)
+        except ImportError:
+            pass
+        raise
+    finally:
+        db.close()
+
+
 @celery_app.task(acks_late=True, max_retries=3, default_retry_delay=120)
 def generate_embeddings_task(model_slug: str = "bge_m3",
                              tipo_items: list = ("insumo", "composicao")):
