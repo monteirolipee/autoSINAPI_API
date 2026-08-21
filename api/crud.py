@@ -128,6 +128,60 @@ def _build_token_match(desc_expr: str, tokens: List[str], trigram: bool,
     return match_clause, params, score_expr
 
 
+# ── SIN-094 · SSOT de normalização de tipo_item e folhas do BOM ──────────────
+# O ETL grava `manutencoes_historico.tipo_item` como 'COMPOSICAO'/'COMPOSIÇÃO'
+# (maiúsculo, com variante acentuada), enquanto o path da API chega minúsculo.
+# Sem normalização, o filtro não casa → 404 para qualquer item.
+
+_ACCENT_TRANSLATION = str.maketrans({
+    "Á": "A", "À": "A", "Â": "A", "Ã": "A", "Ä": "A",
+    "É": "E", "È": "E", "Ê": "E",
+    "Í": "I", "Ï": "I",
+    "Ó": "O", "Ô": "O", "Õ": "O", "Ö": "O",
+    "Ú": "U", "Ü": "U",
+    "Ç": "C",
+})
+
+
+def _normalize_tipo_item(tipo) -> str:
+    """Normaliza tipo_item para comparação case/acento-insensível ('Composição' → 'COMPOSICAO')."""
+    return str(tipo or "").strip().upper().translate(_ACCENT_TRANSLATION)
+
+
+# Expressão SQL equivalente a _normalize_tipo_item aplicada à coluna (Postgres).
+_SQL_TIPO_NORM = "UPPER(TRANSLATE({col}, 'ÁÀÂÃÄÉÈÊÍÏÓÔÕÖÚÜÇ', 'AAAAAEEEIIOOOOUUC'))"
+
+
+def _filter_bom_leaves(rows: List[dict]) -> List[dict]:
+    """Retorna apenas as FOLHAS do BOM hierárquico (ADR-040 / SIN-094).
+
+    Uma linha COMPOSICAO cujo nível tenha linhas mais profundas abaixo é PAI:
+    seu custo consolidado duplicaria os filhos no somatório. Linha COMP sem
+    nada mais profundo é folha legítima (custo sem explosão disponível).
+    BOM sem níveis utilizáveis → lista integral (retrocompatível)."""
+    if not rows:
+        return []
+
+    def _nivel(r: dict) -> int:
+        try:
+            return int(r.get("nivel") or 1)
+        except (TypeError, ValueError):
+            return 1
+
+    max_nivel = max(_nivel(r) for r in rows)
+    if max_nivel <= 1:
+        return list(rows)
+
+    leaves = [
+        r for r in rows
+        if not (
+            _normalize_tipo_item(r.get("tipo_item")).startswith("COMPOSICAO")
+            and any(_nivel(x) > _nivel(r) for x in rows)
+        )
+    ]
+    return leaves or list(rows)
+
+
 def _trigram_enabled(db: Session) -> bool:
     """Detecta pg_trgm + unaccent + f_unaccent (migration 006). Nunca levanta
     exceção: em fallback (sem extensões) a busca usa ILIKE simples."""
@@ -758,15 +812,19 @@ def get_manutencoes_historico(db: Session, codigo: int, tipo_item: str) -> List[
     """
     Retorna o histórico de manutenção (ativações/desativações) de um item.
     """
+    # SIN-094: comparação case/acento-insensível — o ETL grava
+    # 'COMPOSICAO'/'COMPOSIÇÃO' e o path chega 'composicao'.
+    tipo_norm = _normalize_tipo_item(tipo_item)
     query = text(f"""
         SELECT item_codigo, tipo_item,
                TO_CHAR(data_referencia, 'YYYY-MM') as data_referencia,
                tipo_manutencao, descricao_item
         FROM {settings.TABLE_MANUTENCOES_HISTORICO}
-        WHERE item_codigo = :codigo AND tipo_item = :tipo_item
+        WHERE item_codigo = :codigo
+          AND {_SQL_TIPO_NORM.format(col='tipo_item')} = :tipo_norm
         ORDER BY data_referencia DESC
     """)
-    result = db.execute(query, {"codigo": codigo, "tipo_item": tipo_item}).fetchall()
+    result = db.execute(query, {"codigo": codigo, "tipo_norm": tipo_norm}).fetchall()
     return [dict(r._mapping) for r in result]
 
 @cache_result(ttl=86400)
@@ -941,7 +999,9 @@ def get_composicao_produtividade(
     equipamento = 0.0
     material = 0.0
 
-    for item in bom_data:
+    # SIN-094: total por FOLHAS — pais COMPOSICAO com custo consolidado
+    # duplicariam os filhos explodidos (caso 87328: 533,41 → 407,62).
+    for item in _filter_bom_leaves(bom_data):
         impacto = float(item.get('custo_impacto_total') or 0)
         unidade = (item.get('unidade') or '').upper()
 
