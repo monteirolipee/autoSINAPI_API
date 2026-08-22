@@ -22,6 +22,8 @@ RUN apt-get update && \
 
 # Estágio 3: Cópia do código da aplicação
 COPY ./api /app/api
+COPY alembic.ini /app/alembic.ini
+COPY ./alembic /app/alembic
 
 # Estágio 4: Segurança e Execução
 RUN apt-get update && apt-get install -y wget procps --no-install-recommends && \

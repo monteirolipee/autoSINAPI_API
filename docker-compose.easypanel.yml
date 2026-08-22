@@ -35,6 +35,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      migrations:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks:
       - sinapi-net
@@ -64,6 +66,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks:
       - sinapi-net
@@ -80,7 +84,22 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
     restart: unless-stopped
+    networks:
+      - sinapi-net
+
+  migrations:
+    image: ${AUTOSINAPI_IMAGE}
+    command: alembic upgrade head
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sinapi}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
     networks:
       - sinapi-net
 
