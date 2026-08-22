@@ -41,7 +41,7 @@ from dateutil.relativedelta import relativedelta
 from . import crud, schemas, config, populate_utils
 from . import search as search_pipeline
 from .database import get_db
-from .tasks import populate_sinapi_task
+from .tasks import populate_sinapi_task, import_vigha_catalog_task
 from .cache_utils import redis_client as cache_redis
 from .portal import router as portal_router
 from .legal_service import get_legal_document
@@ -454,6 +454,22 @@ def trigger_database_population(
             detail=f"Já existe uma tarefa em andamento para {payload.state.upper()} {payload.month:02d}/{payload.year}."
         )
     return result
+
+
+@app.post("/api/v1/admin/import-vigha", status_code=202, tags=["tier_1", "Admin"], summary="Importar catálogo SINAPI do VIGHA")
+def trigger_vigha_import(
+    payload: schemas.VighaImportRequest,
+    _auth=Depends(verify_admin_token),
+):
+    """Dispara importação assíncrona de composições e insumos VIGHA."""
+    states = [s.upper() for s in payload.states] if payload.states else None
+    task = import_vigha_catalog_task.delay(
+        year=payload.year,
+        months=payload.months,
+        states=states,
+        include_desonerado=payload.include_desonerado,
+    )
+    return {"message": "VIGHA import task started.", "task_id": task.id}
 
 @app.get("/api/v1/admin/tasks/{task_id}", tags=["tier_1", "Admin"], summary="Verificar status de tarefa Celery", response_description="Status e resultado da tarefa Celery.", responses=_AUTH_RESPONSES)
 def get_task_status(task_id: str, _auth=Depends(verify_admin_token)):

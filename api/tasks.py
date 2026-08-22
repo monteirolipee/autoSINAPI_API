@@ -84,6 +84,25 @@ def populate_sinapi_task(self, db_config: dict, sinapi_config: dict, lock_token:
     return result
 
 
+@celery_app.task(bind=True, max_retries=1, default_retry_delay=600)
+def import_vigha_catalog_task(self, year=2026, months=None, states=None, include_desonerado=True):
+    """Importa catálogos e custos VIGHA em lote, sem bloquear a API."""
+    from .vigha_import import import_vigha_catalog
+
+    try:
+        result = import_vigha_catalog(
+            year=year,
+            months=months,
+            states=states,
+            include_desonerado=include_desonerado,
+        )
+        _invalidate_caches()
+        return result
+    except Exception as exc:
+        logger.exception("Falha na importação VIGHA")
+        raise self.retry(exc=exc)
+
+
 @celery_app.task(acks_late=True, max_retries=1, default_retry_delay=3600)
 def schedule_monthly_etl():
     """Periodic task (Celery beat): compute & dispatch ETL for each ETL_STATES."""

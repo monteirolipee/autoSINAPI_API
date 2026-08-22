@@ -324,6 +324,14 @@ class PopulateDatabaseRequest(BaseModel):
     state: str = Field(default="SP", min_length=2, max_length=2)
 
 
+class VighaImportRequest(BaseModel):
+    """Parâmetros para importar catálogos VIGHA em lote."""
+    year: int = 2026
+    months: List[int] = Field(default_factory=lambda: list(range(1, 7)))
+    states: List[str] = Field(default_factory=list)
+    include_desonerado: bool = True
+
+
 class PlanInfo(BaseModel):
     slug: str
     name: str
