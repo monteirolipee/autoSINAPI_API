@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: publish-easypanel-image-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   packages: write
@@ -12,6 +16,7 @@ permissions:
 jobs:
   image:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout with submodules
         uses: actions/checkout@v4
