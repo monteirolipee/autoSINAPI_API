@@ -124,7 +124,8 @@ services:
         kong migrations finish;
         test -n "$${ESTAKHA_SINAPI_API_KEY}";
         sed "s|__ESTAKHA_API_KEY__|$${ESTAKHA_SINAPI_API_KEY}|g" /usr/local/kong/declarative/kong.yml > /tmp/kong.yml;
-        kong config db_import /tmp/kong.yml;
+        kong config parse /tmp/kong.yml;
+        kong config db_import /tmp/kong.yml || echo "Kong declarative config already imported; continuing";
       '
     depends_on:
       db:
