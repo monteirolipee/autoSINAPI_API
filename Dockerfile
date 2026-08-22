@@ -24,16 +24,19 @@ RUN apt-get update && \
 COPY ./api /app/api
 COPY alembic.ini /app/alembic.ini
 COPY ./alembic /app/alembic
+COPY ./docker/entrypoint.sh /app/entrypoint.sh
 
 # Estágio 4: Segurança e Execução
 RUN apt-get update && apt-get install -y wget procps --no-install-recommends && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
     useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
+    chown -R appuser:appuser /app && \
+    chmod +x /app/entrypoint.sh
 USER appuser
 
 # Expõe a porta que o Uvicorn usará
 EXPOSE 8000
+ENTRYPOINT ["/app/entrypoint.sh"]
 # Inicia o servidor Uvicorn
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
