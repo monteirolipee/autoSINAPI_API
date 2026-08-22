@@ -43,13 +43,16 @@ def upgrade() -> None:
 
     # Extensao vector: tolerante a ausencia (degradacao graciosa, ADR-006).
     has_vector = False
+    bind = op.get_bind()
     try:
-        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        # Confirmacao pos-criacao: CREATE IF NOT EXISTS nao falha quando a
-        # extensao ja esta instalada, mas precisamos saber se o tipo existe.
-        has_vector = op.get_bind().execute(
-            "SELECT 1 FROM pg_type WHERE typname = 'vector'"
-        ).fetchone() is not None
+        # Use a savepoint because a missing extension aborts the current
+        # PostgreSQL transaction. Without it, the fallback INSERT below also
+        # fails with InFailedSqlTransaction.
+        with bind.begin_nested():
+            bind.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+            has_vector = bind.execute(
+                sa.text("SELECT 1 FROM pg_type WHERE typname = 'vector'")
+            ).fetchone() is not None
     except Exception:
         has_vector = False
 
