@@ -49,6 +49,9 @@ COPY alembic.ini /app/alembic.ini
 COPY ./alembic /app/alembic
 COPY ./docker/entrypoint.sh /app/entrypoint.sh
 
+# Fail the image build if the VIGHA importer is missing from the published image.
+RUN test -f /app/api/vigha_import.py && grep -q 'import-vigha' /app/api/main.py
+
 # Estágio 4: Segurança e Execução
 RUN apt-get update && apt-get install -y wget procps --no-install-recommends && \
     apt-get clean && \
