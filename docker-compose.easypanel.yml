@@ -85,9 +85,7 @@ services:
       - sinapi-net
 
   kong-migrations:
-    build:
-      context: ./kong/
-      dockerfile: Dockerfile
+    image: kong:3.4
     env_file: .env
     environment:
       KONG_DATABASE: postgres
@@ -98,8 +96,7 @@ services:
     command: >-
       sh -c '
         set -e;
-        until pg_isready -h db -U "$${KONG_PG_USER}" -d kong; do sleep 2; done;
-        kong migrations bootstrap || kong migrations up;
+        until kong migrations bootstrap >/dev/null 2>&1 || kong migrations up >/dev/null 2>&1; do sleep 2; done;
         kong migrations finish;
         test -n "$${ESTAKHA_SINAPI_API_KEY}";
         sed "s|__ESTAKHA_API_KEY__|$${ESTAKHA_SINAPI_API_KEY}|g" /usr/local/kong/declarative/kong.yml > /tmp/kong.yml;
@@ -115,9 +112,7 @@ services:
       - ./kong:/usr/local/kong/declarative:ro
 
   kong:
-    build:
-      context: ./kong/
-      dockerfile: Dockerfile
+    image: kong:3.4
     env_file: .env
     environment:
       KONG_DATABASE: postgres
