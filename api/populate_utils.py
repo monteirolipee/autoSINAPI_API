@@ -83,14 +83,13 @@ def parse_etl_states(states_csv: str) -> list:
 def build_db_config() -> dict:
     """Monta o db_config do worker ETL com credenciais conhecidas (SSOT).
 
-    Ordem de precedência (ADR-033 R1.1): PG_* -> POSTGRES_* -> host padrão
-    `autodinapi-db.lamp.local`. O hostname genérico "db" NUNCA é usado como
-    default: no server_mesh ele colide com o banco de outra stack (redmine_db),
-    quebrando a autenticação do ETL (R1.3). As mesmas variáveis PG_* usadas
-    pelo quota-alerter garantem que quem escreve e quem lê o banco concordam.
+    Ordem de precedência (ADR-033 R1.1): PG_* -> POSTGRES_* -> DB_HOST ->
+    host padrão `db`. Em Compose, `db` é o alias privado da própria stack.
+    As mesmas variáveis PG_* usadas pelo quota-alerter garantem que quem
+    escreve e quem lê o banco concordam.
     """
     return {
-        "host": os.getenv("PG_HOST", "autosinapi-db.lamp.local"),
+        "host": os.getenv("PG_HOST", os.getenv("DB_HOST", "db")),
         "port": int(os.getenv("PG_PORT", "5432")),
         "database": os.getenv("PG_DATABASE", os.getenv("POSTGRES_DB", "sinapi")),
         "user": os.getenv("PG_USER", os.getenv("POSTGRES_USER", "admin")),
