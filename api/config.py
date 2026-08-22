@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     # --- Configurações de Cache ---
     # SSOT: nome único da stack (evita colisão do alias genérico "redis"
     # no server_mesh, que round-robina para server_redis de outra stack).
-    REDIS_HOST: str = "autosinapi_redis"
+    REDIS_HOST: str = "redis"
     REDIS_PORT: int = 6379
     CACHE_DEFAULT_TTL: int = 86400  # 24 horas
 
@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     ETL_STATES: str = "SP"
 
     # --- Configurações de Segurança ---
-    ALLOWED_ORIGINS: str = "*"  # Lista separada por vírgula. Ex: "https://demo.lamp.local,http://localhost:8080"
+    ALLOWED_ORIGINS: str = ""  # Lista separada por vírgula; vazio desabilita CORS para integração server-to-server.
 
     # --- Embeddings vetoriais (ADR-006 / STORY-SRC-004, Fase 4) ---
     # Provider primário: bge-m3 no Ollama do notebook (lampbook, via Tailscale).

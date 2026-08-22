@@ -1,3 +1,4 @@
 [submodule "AutoSINAPI"]
 	path = AutoSINAPI
 	url = https://github.com/LAMP-LUCAS/AutoSINAPI.git
+	branch = main

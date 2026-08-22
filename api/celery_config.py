@@ -18,7 +18,7 @@ from celery.schedules import crontab
 
 # Configurações para o Celery
 # Utiliza REDIS_HOST do ambiente ou fallback para o nome único da stack
-redis_host = os.getenv("REDIS_HOST", "autosinapi_redis")
+redis_host = os.getenv("REDIS_HOST", "redis")
 broker_url = f'redis://{redis_host}:6379/0'
 result_backend = f'redis://{redis_host}:6379/0'
 

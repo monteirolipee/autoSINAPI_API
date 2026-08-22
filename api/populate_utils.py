@@ -13,7 +13,7 @@ logger = logging.getLogger("autosinapi.populate_utils")
 
 # SSOT: mesmo host do celery_config (autosinapi_redis). O alias genérico
 # "redis" colide no server_mesh (server_redis), quebrando lock/cache.
-redis_client = redis.Redis(host=os.getenv("REDIS_HOST", "autosinapi_redis"), port=6379, db=0)
+redis_client = redis.Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379, db=0)
 
 # Tempo de posse do lock: 90 min (uma execução de ETL completa não deve
 # ultrapassar isso; sobra margem contra travamentos por crash).

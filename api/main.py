@@ -198,8 +198,8 @@ app.openapi = custom_openapi
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS.split(",") if settings.ALLOWED_ORIGINS != "*" else ["*"],
-    allow_credentials=settings.ALLOWED_ORIGINS != "*",
+    allow_origins=[origin for origin in settings.ALLOWED_ORIGINS.split(",") if origin.strip()],
+    allow_credentials=bool(settings.ALLOWED_ORIGINS.strip()),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -403,7 +403,7 @@ def base_availability(db: Session = Depends(get_db)):
     })
 
 # Conexão direta com Redis para lock de tarefas (idempotência)
-redis_client = redis.Redis(host=os.getenv("REDIS_HOST", "autosinapi_redis"), port=6379, db=0)
+redis_client = redis.Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379, db=0)
 
 @app.get("/api/v1/public/stats", tags=["tier_1", "Public"], summary="Obter estatísticas do banco de dados", response_description="Volumetria geral do banco de dados SINAPI.", responses=_RATE_LIMIT_RESPONSE)
 def get_database_stats(db: Session = Depends(get_db)):

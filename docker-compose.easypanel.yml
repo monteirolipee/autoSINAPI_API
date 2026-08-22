@@ -1,0 +1,153 @@
+services:
+  db:
+    image: postgres:15-alpine
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sinapi}
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_MULTIPLE_DATABASES: sinapi,kong
+      KONG_PG_USER: ${KONG_PG_USER:-kong}
+      KONG_PG_PASSWORD: ${KONG_PG_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/db/multiple-databases.sh:/docker-entrypoint-initdb.d/multiple-databases.sh:ro
+    restart: unless-stopped
+    networks:
+      - sinapi-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KONG_PG_USER:-kong} -d kong"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  api:
+    image: ${AUTOSINAPI_IMAGE}
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sinapi}
+      REDIS_HOST: redis
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    volumes:
+      - autosinapi_downloads:/app/downloads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - sinapi-net
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks:
+      - sinapi-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  celery_worker:
+    image: ${AUTOSINAPI_IMAGE}
+    command: celery -A api.tasks.celery_app worker --loglevel=info
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sinapi}
+      REDIS_HOST: redis
+    volumes:
+      - autosinapi_downloads:/app/downloads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - sinapi-net
+
+  celery_beat:
+    image: ${AUTOSINAPI_IMAGE}
+    command: celery -A api.tasks.celery_app beat --loglevel=info --schedule=/app/celerybeat/celerybeat-schedule
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sinapi}
+      REDIS_HOST: redis
+    volumes:
+      - celery_schedule:/app/celerybeat
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - sinapi-net
+
+  kong-migrations:
+    build:
+      context: ./kong/
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_DATABASE: kong
+      KONG_PG_HOST: db
+      KONG_PG_USER: ${KONG_PG_USER:-kong}
+      KONG_PG_PASSWORD: ${KONG_PG_PASSWORD}
+    command: >-
+      sh -c '
+        set -e;
+        until pg_isready -h db -U "$${KONG_PG_USER}" -d kong; do sleep 2; done;
+        kong migrations bootstrap || kong migrations up;
+        kong migrations finish;
+        test -n "$${ESTAKHA_SINAPI_API_KEY}";
+        sed "s|__ESTAKHA_API_KEY__|$${ESTAKHA_SINAPI_API_KEY}|g" /usr/local/kong/declarative/kong.yml > /tmp/kong.yml;
+        kong config db_import /tmp/kong.yml;
+      '
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - sinapi-net
+    volumes:
+      - ./kong:/usr/local/kong/declarative:ro
+
+  kong:
+    build:
+      context: ./kong/
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_DATABASE: kong
+      KONG_PG_HOST: db
+      KONG_PG_USER: ${KONG_PG_USER:-kong}
+      KONG_PG_PASSWORD: ${KONG_PG_PASSWORD}
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 127.0.0.1:8001
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
+    depends_on:
+      kong-migrations:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - sinapi-net
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres_data:
+  autosinapi_downloads:
+  celery_schedule:
+
+networks:
+  sinapi-net:
+    driver: bridge
