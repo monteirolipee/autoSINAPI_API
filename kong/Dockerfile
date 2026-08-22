@@ -4,13 +4,18 @@ FROM kong:3.4
 # Mude temporariamente para o usuário root para ter permissão de instalar pacotes
 USER root
 
-# Usa o apt-get (para Debian) em vez do apk (para Alpine)
-# 1. Atualiza a lista de pacotes disponíveis
-# 2. Instala o cliente do postgresql sem pedir confirmação (-y)
-# 3. Limpa o cache para manter a imagem pequena
-RUN apt-get update \
-    && apt-get install -y postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+# A imagem oficial pode variar entre Debian/Ubuntu e Alpine conforme a tag.
+# Instala apenas o cliente PostgreSQL usado pelo container de migrações.
+RUN if command -v apk >/dev/null 2>&1; then \
+      apk add --no-cache postgresql-client; \
+    elif command -v apt-get >/dev/null 2>&1; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends postgresql-client \
+      && rm -rf /var/lib/apt/lists/*; \
+    else \
+      echo "Nenhum gerenciador de pacotes suportado encontrado" >&2; \
+      exit 1; \
+    fi
 
 
 # IMPORTANTE: Retorna para o usuário padrão 'kong' por segurança
