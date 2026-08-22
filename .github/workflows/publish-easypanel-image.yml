@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:
       - name: Checkout with submodules
@@ -38,7 +38,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/arm64
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/autosinapi-api:${{ github.sha }}
