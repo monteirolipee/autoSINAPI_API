@@ -124,7 +124,7 @@ services:
       sh -c '
         set -e;
         until kong migrations bootstrap >/dev/null 2>&1 || kong migrations up >/dev/null 2>&1; do sleep 2; done;
-        kong migrations finish;
+        kong migrations finish || echo "Kong migrations already finished; continuing";
         test -n "$${ESTAKHA_SINAPI_API_KEY}";
         sed "s|__ESTAKHA_API_KEY__|$${ESTAKHA_SINAPI_API_KEY}|g" /usr/local/kong/declarative/kong.yml > /tmp/kong.yml;
         kong config parse /tmp/kong.yml;
