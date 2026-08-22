@@ -3,6 +3,10 @@
 # Estágio 1: Imagem base
 FROM python:3.10-slim
 
+# Invalidates the application layer on every published commit.
+ARG BUILD_REV=dev
+ENV BUILD_REV=${BUILD_REV}
+
 # Variáveis de ambiente
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1

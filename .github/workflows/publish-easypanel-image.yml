@@ -45,3 +45,6 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/autosinapi-api:main
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          no-cache: true
+          build-args: |
+            BUILD_REV=${{ github.sha }}
