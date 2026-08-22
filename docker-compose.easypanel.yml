@@ -23,6 +23,7 @@ services:
 
   api:
     image: ${AUTOSINAPI_IMAGE}
+    pull_policy: always
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sinapi}
@@ -54,6 +55,7 @@ services:
 
   celery_worker:
     image: ${AUTOSINAPI_IMAGE}
+    pull_policy: always
     command: celery -A api.tasks.celery_app worker --loglevel=info
     env_file: .env
     environment:
@@ -74,6 +76,7 @@ services:
 
   celery_beat:
     image: ${AUTOSINAPI_IMAGE}
+    pull_policy: always
     command: celery -A api.tasks.celery_app beat --loglevel=info --schedule=/app/celerybeat/celerybeat-schedule
     env_file: .env
     environment:
@@ -92,6 +95,7 @@ services:
 
   migrations:
     image: ${AUTOSINAPI_IMAGE}
+    pull_policy: always
     working_dir: /app
     command: alembic -c /app/alembic.ini upgrade head
     env_file: .env
